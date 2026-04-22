@@ -853,6 +853,56 @@ print('')
 PY
 }
 
+extract_anytls_inbound_details() {
+  local config_path="$1"
+  if [[ -z "$config_path" || ! -f "$config_path" ]]; then
+    return 0
+  fi
+
+  ANYTLS_CONFIG_PATH="$config_path" python3 - <<'PY'
+import json
+import os
+
+path = os.environ['ANYTLS_CONFIG_PATH']
+with open(path, 'r', encoding='utf-8') as fp:
+    data = json.load(fp)
+
+inbounds = data.get('inbounds') or []
+target = None
+for inbound in inbounds:
+    if isinstance(inbound, dict) and inbound.get('type') == 'anytls':
+        target = inbound
+        break
+
+if target is None:
+    print('found\tfalse')
+    raise SystemExit(0)
+
+users = target.get('users') or []
+password = ''
+if users and isinstance(users[0], dict):
+    password = str(users[0].get('password') or '')
+
+tls = target.get('tls') if isinstance(target.get('tls'), dict) else {}
+tls_enabled = bool(tls.get('enabled'))
+padding_scheme = target.get('padding_scheme')
+
+def emit(key, value):
+    text = '' if value is None else str(value)
+    print(f'{key}\t{text}')
+
+emit('found', 'true')
+emit('listen', target.get('listen'))
+emit('listen_port', target.get('listen_port'))
+emit('password', password)
+emit('tls_enabled', 'true' if tls_enabled else 'false')
+emit('certificate_path', tls.get('certificate_path'))
+emit('key_path', tls.get('key_path'))
+emit('tls_server_name', tls.get('server_name'))
+emit('padding_scheme_json', '' if padding_scheme is None else json.dumps(padding_scheme, ensure_ascii=False))
+PY
+}
+
 config_has_anytls_inbound() {
   local config_path="$1"
   local parsed has_anytls
@@ -1359,6 +1409,8 @@ write_anytls_config() {
   local tls_enabled="$5"
   local cert_path="$6"
   local key_path="$7"
+  local tls_server_name="${8:-}"
+  local padding_scheme_json="${9:-}"
 
   mkdir -p "$(dirname "$config_path")"
 
@@ -1369,6 +1421,8 @@ write_anytls_config() {
   ANYTLS_TLS_ENABLED="$tls_enabled" \
   ANYTLS_CERT_PATH="$cert_path" \
   ANYTLS_KEY_PATH="$key_path" \
+  ANYTLS_TLS_SERVER_NAME="$tls_server_name" \
+  ANYTLS_PADDING_SCHEME_JSON="$padding_scheme_json" \
   python3 - <<'PY'
 import json
 import os
@@ -1381,6 +1435,8 @@ password = os.environ['ANYTLS_PASSWORD']
 tls_enabled = os.environ['ANYTLS_TLS_ENABLED'].lower() == 'true'
 cert_path = os.environ.get('ANYTLS_CERT_PATH', '')
 key_path = os.environ.get('ANYTLS_KEY_PATH', '')
+tls_server_name = os.environ.get('ANYTLS_TLS_SERVER_NAME', '')
+padding_scheme_json = os.environ.get('ANYTLS_PADDING_SCHEME_JSON', '')
 
 inbound = {
     'type': 'anytls',
@@ -1394,12 +1450,17 @@ inbound = {
     ],
 }
 
+if padding_scheme_json:
+    inbound['padding_scheme'] = json.loads(padding_scheme_json)
+
 if tls_enabled:
     inbound['tls'] = {
         'enabled': True,
         'certificate_path': cert_path,
         'key_path': key_path,
     }
+    if tls_server_name:
+        inbound['tls']['server_name'] = tls_server_name
 
 config = {
     'log': {
@@ -1807,6 +1868,104 @@ adopt_existing_anytls_flow() {
   show_anytls_parameters_for_service "$service_name" || true
 }
 
+migrate_existing_anytls_flow() {
+  local service_name="$1"
+  local config_path parsed
+
+  service_name="$(normalize_service_name "$service_name")"
+  if ! service_exists "$service_name"; then
+    die "未找到服务: ${service_name}"
+  fi
+
+  config_path="$(extract_config_path_from_service "$service_name")"
+  if [[ -z "$config_path" || ! -f "$config_path" ]]; then
+    die "未找到配置文件: ${config_path}"
+  fi
+
+  parsed="$(extract_anytls_inbound_details "$config_path")"
+
+  local found listen_addr listen_port anytls_password tls_enabled cert_path key_path tls_server_name padding_scheme_json
+  found="false"
+  listen_addr=""
+  listen_port=""
+  anytls_password=""
+  tls_enabled="false"
+  cert_path=""
+  key_path=""
+  tls_server_name=""
+  padding_scheme_json=""
+
+  while IFS=$'\t' read -r key value; do
+    case "$key" in
+      found) found="$value" ;;
+      listen) listen_addr="$value" ;;
+      listen_port) listen_port="$value" ;;
+      password) anytls_password="$value" ;;
+      tls_enabled) tls_enabled="$value" ;;
+      certificate_path) cert_path="$value" ;;
+      key_path) key_path="$value" ;;
+      tls_server_name) tls_server_name="$value" ;;
+      padding_scheme_json) padding_scheme_json="$value" ;;
+    esac
+  done <<< "$parsed"
+
+  if [[ "$found" != "true" ]]; then
+    die "配置中未找到 AnyTLS inbound: ${config_path}"
+  fi
+
+  listen_addr="${listen_addr:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+  listen_port="${listen_port:-$ANYTLS_STANDARD_LISTEN_PORT}"
+
+  if [[ -z "$anytls_password" ]]; then
+    die "未能从现有配置中读取 AnyTLS 密码: ${config_path}"
+  fi
+
+  if [[ "$tls_enabled" == "true" ]]; then
+    if [[ -z "$cert_path" || -z "$key_path" ]]; then
+      die "现有 TLS 配置不完整，未找到证书或私钥路径。"
+    fi
+  else
+    cert_path=""
+    key_path=""
+    tls_server_name=""
+  fi
+
+  local config_backup_path service_file service_backup_path
+  config_backup_path="$(backup_file_if_exists "$config_path")"
+  service_file="$(service_unit_file_path "$service_name")"
+  service_backup_path="$(backup_file_if_exists "$service_file")"
+
+  if [[ -n "$config_backup_path" ]]; then
+    ok "已创建配置备份: ${config_backup_path}"
+  fi
+  if [[ -n "$service_backup_path" ]]; then
+    ok "已创建服务备份: ${service_backup_path}"
+  fi
+
+  write_anytls_config "$config_path" "$listen_addr" "$listen_port" "$anytls_password" "$tls_enabled" "$cert_path" "$key_path" "$tls_server_name" "$padding_scheme_json"
+  validate_config_file "$config_path" || die "生成的配置无效: ${config_path}"
+  ok "已按现有参数重写 AnyTLS 配置: ${config_path}"
+
+  write_service_file "$service_name" "$config_path"
+
+  if ! apply_service_state_auto "$service_name"; then
+    if [[ -n "$config_backup_path" && -f "$config_backup_path" ]]; then
+      cp "$config_backup_path" "$config_path"
+      warn "服务应用失败，已回滚配置文件: ${config_path}"
+    fi
+    if [[ -n "$service_backup_path" && -f "$service_backup_path" ]]; then
+      cp "$service_backup_path" "$service_file"
+      systemctl daemon-reload
+      warn "服务应用失败，已回滚服务文件: ${service_file}"
+    fi
+    systemctl restart "$service_name" >/dev/null 2>&1 || true
+    die "迁移现有 AnyTLS 失败，请检查日志。"
+  fi
+
+  ok "已使用脚本重配 ${service_name}，并保留原有 AnyTLS 参数"
+  show_anytls_parameters_for_service "$service_name" || true
+}
+
 anytls_wizard_flow() {
   if [[ ! -x "$BINARY_PATH" ]]; then
     die "未找到 sing-box 二进制，请先执行安装。"
@@ -1827,6 +1986,10 @@ anytls_wizard_flow() {
     info "当前配置文件: ${config_path}"
     if prompt_yes_no "接管现有配置并保持当前 AnyTLS 不变？" "y"; then
       adopt_existing_anytls_flow "$CURRENT_SERVICE_NAME"
+      return 0
+    fi
+    if prompt_yes_no "按脚本重配当前 AnyTLS，并沿用现有密码/端口/证书路径？" "y"; then
+      migrate_existing_anytls_flow "$CURRENT_SERVICE_NAME"
       return 0
     fi
   fi
