@@ -2,6 +2,28 @@
 
 这个目录现在按用途分层，根目录只保留入口和说明。
 
+## 直接运行
+
+root 机器上可以直接执行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Z-WICK/sing-box-proxy/main/sing-box-proxy-manager.sh | bash
+```
+
+如果当前用户不是 root：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Z-WICK/sing-box-proxy/main/sing-box-proxy-manager.sh | sudo bash
+```
+
+如果想先下载再运行：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Z-WICK/sing-box-proxy/main/sing-box-proxy-manager.sh -o sing-box-proxy-manager.sh
+chmod +x sing-box-proxy-manager.sh
+sudo ./sing-box-proxy-manager.sh
+```
+
 ## 目录
 
 - `sing-box-proxy-manager.sh`：兼容旧习惯的入口脚本，实际实现位于 `scripts/`
