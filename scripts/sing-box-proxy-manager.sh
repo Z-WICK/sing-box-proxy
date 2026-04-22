@@ -16,6 +16,7 @@ ANYTLS_STANDARD_SERVICE_NAME="sing-box-anytls.service"
 ANYTLS_STANDARD_CONFIG_PATH="/etc/sing-box/anytls.json"
 ANYTLS_STANDARD_LISTEN_ADDR="::"
 ANYTLS_STANDARD_LISTEN_PORT="443"
+ANYTLS_FALLBACK_LISTEN_PORT="8443"
 ANYTLS_STANDARD_CERT_PATH="/etc/sing-box/cert.pem"
 ANYTLS_STANDARD_KEY_PATH="/etc/sing-box/key.pem"
 ANYTLS_METADATA_DIR="${DATA_DIR}/metadata"
@@ -128,6 +129,87 @@ default_server_identity() {
   fi
 
   printf "localhost"
+}
+
+is_listen_port_occupied() {
+  local listen_addr="$1"
+  local listen_port="$2"
+
+  LISTEN_ADDR="$listen_addr" LISTEN_PORT="$listen_port" python3 - <<'PY'
+import errno
+import os
+import socket
+
+listen_addr = os.environ.get('LISTEN_ADDR', '').strip()
+listen_port = int(os.environ['LISTEN_PORT'])
+
+candidates = []
+if not listen_addr or listen_addr == '::':
+    candidates.append((socket.AF_INET6, '::', False))
+elif ':' in listen_addr:
+    candidates.append((socket.AF_INET6, listen_addr, True))
+else:
+    candidates.append((socket.AF_INET, listen_addr, True))
+
+if not candidates:
+    raise SystemExit(1)
+
+for family, host, v6only in candidates:
+    sock = None
+    try:
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family == socket.AF_INET6 and hasattr(socket, 'IPPROTO_IPV6') and hasattr(socket, 'IPV6_V6ONLY'):
+            sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1 if v6only else 0)
+        if family == socket.AF_INET6:
+            sock.bind((host, listen_port, 0, 0))
+        else:
+            sock.bind((host, listen_port))
+        raise SystemExit(1)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise SystemExit(0)
+        if family == socket.AF_INET6 and exc.errno in (errno.EAFNOSUPPORT, errno.EADDRNOTAVAIL):
+            continue
+        raise
+    finally:
+        if sock is not None:
+            sock.close()
+
+if listen_addr in ('', '::'):
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('0.0.0.0', listen_port))
+        sock.close()
+        raise SystemExit(1)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            raise SystemExit(0)
+        raise
+
+raise SystemExit(1)
+PY
+}
+
+pick_available_anytls_listen_port() {
+  local preferred_port="${1:-$ANYTLS_STANDARD_LISTEN_PORT}"
+  local fallback_port="${2:-$ANYTLS_FALLBACK_LISTEN_PORT}"
+  local listen_addr="${3:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+
+  if ! is_listen_port_occupied "$listen_addr" "$preferred_port"; then
+    printf "%s" "$preferred_port"
+    return 0
+  fi
+
+  warn "检测到 ${listen_addr}:${preferred_port} 已被占用，默认改用 ${fallback_port}"
+
+  if ! is_listen_port_occupied "$listen_addr" "$fallback_port"; then
+    printf "%s" "$fallback_port"
+    return 0
+  fi
+
+  die "检测到 ${preferred_port} 和 ${fallback_port} 都已被占用，请先处理端口冲突。"
 }
 
 validate_client_server() {
@@ -1996,7 +2078,7 @@ anytls_wizard_flow() {
 
   local listen_addr listen_port
   listen_addr="$ANYTLS_STANDARD_LISTEN_ADDR"
-  listen_port="$ANYTLS_STANDARD_LISTEN_PORT"
+  listen_port="$(pick_available_anytls_listen_port "$ANYTLS_STANDARD_LISTEN_PORT" "$ANYTLS_FALLBACK_LISTEN_PORT" "$listen_addr")"
 
   local anytls_password existing_password
   anytls_password="$(generate_password)"

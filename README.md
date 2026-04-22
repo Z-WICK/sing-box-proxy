@@ -24,6 +24,8 @@ chmod +x sing-box-proxy-manager.sh
 sudo ./sing-box-proxy-manager.sh
 ```
 
+新建 AnyTLS 时，脚本会先检查 `443`。如果 `443` 已被占用，会默认改用 `8443`；如果当前机器已经有现成的 AnyTLS 服务，脚本会优先保留现有端口。
+
 ## 目录
 
 - `sing-box-proxy-manager.sh`：兼容旧习惯的入口脚本，实际实现位于 `scripts/`
