@@ -20,11 +20,21 @@ ANYTLS_FALLBACK_LISTEN_PORT="8443"
 ANYTLS_STANDARD_CERT_PATH="/etc/sing-box/cert.pem"
 ANYTLS_STANDARD_KEY_PATH="/etc/sing-box/key.pem"
 ANYTLS_METADATA_DIR="${DATA_DIR}/metadata"
+VLESS_REALITY_STANDARD_SERVICE_NAME="sing-box-vless-reality.service"
+VLESS_REALITY_STANDARD_CONFIG_PATH="/etc/sing-box/vless-reality.json"
+VLESS_REALITY_STANDARD_LISTEN_ADDR="::"
+VLESS_REALITY_STANDARD_LISTEN_PORT="443"
+VLESS_REALITY_FALLBACK_LISTEN_PORT="8443"
+VLESS_REALITY_DEFAULT_FLOW="xtls-rprx-vision"
+VLESS_REALITY_METADATA_DIR="${DATA_DIR}/vless-reality-meta"
 CLIENT_IMPORT_DIR="${DATA_DIR}/client-import"
 CLIENT_IMPORT_PUBLISH_DIR="${DATA_DIR}/client-import-publish"
 CLIENT_IMPORT_HTTP_SERVICE="sing-box-import-http.service"
 CLIENT_IMPORT_HTTP_SCRIPT="${TOOLS_DIR}/import-http-server.py"
 CLIENT_IMPORT_HTTP_PORT="18080"
+SCRIPT_SOURCE_PATH="${BASH_SOURCE[0]-$0}"
+SCRIPT_DIR="$(cd -- "$(dirname "${SCRIPT_SOURCE_PATH}")" && pwd)"
+MODULES_DIR="${SCRIPT_DIR}/modules"
 
 COLOR_RESET='\033[0m'
 COLOR_RED='\033[31m'
@@ -33,6 +43,7 @@ COLOR_YELLOW='\033[33m'
 COLOR_BLUE='\033[34m'
 
 CURRENT_SERVICE_NAME=""
+VLESS_REALITY_MODULE_LOADED="false"
 
 validate_service_name() {
   local service_name="$1"
@@ -54,6 +65,21 @@ ok() {
 die() {
   printf "%b[ERR ]%b %s\n" "$COLOR_RED" "$COLOR_RESET" "$*" >&2
   exit 1
+}
+
+load_vless_reality_module() {
+  local module_path
+  module_path="${MODULES_DIR}/vless_reality.sh"
+
+  if [[ ! -f "$module_path" ]]; then
+    warn "未找到模块: ${module_path}，VLESS Reality 功能已禁用。"
+    return 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$module_path"
+  VLESS_REALITY_MODULE_LOADED="true"
+  return 0
 }
 
 require_root() {
@@ -1380,9 +1406,9 @@ uninstall_singbox_full_flow() {
     fi
   fi
 
-  if prompt_yes_no "删除 AnyTLS 元数据和客户端导入文件？" "y"; then
-    rm -rf "$ANYTLS_METADATA_DIR" "$CLIENT_IMPORT_DIR" "$CLIENT_IMPORT_PUBLISH_DIR"
-    ok "已删除 ${ANYTLS_METADATA_DIR}、${CLIENT_IMPORT_DIR} 和 ${CLIENT_IMPORT_PUBLISH_DIR}"
+  if prompt_yes_no "删除 AnyTLS/VLESS 元数据和客户端导入文件？" "y"; then
+    rm -rf "$ANYTLS_METADATA_DIR" "$VLESS_REALITY_METADATA_DIR" "$CLIENT_IMPORT_DIR" "$CLIENT_IMPORT_PUBLISH_DIR"
+    ok "已删除 ${ANYTLS_METADATA_DIR}、${VLESS_REALITY_METADATA_DIR}、${CLIENT_IMPORT_DIR} 和 ${CLIENT_IMPORT_PUBLISH_DIR}"
   fi
 
   systemctl daemon-reload
@@ -2437,7 +2463,14 @@ main_menu() {
     printf "4) 查看状态\n"
     printf "5) AnyTLS 配置向导\n"
     printf "6) 查看 AnyTLS 参数\n"
-    printf "7) 卸载\n"
+    if [[ "$VLESS_REALITY_MODULE_LOADED" == "true" ]]; then
+      printf "7) VLESS Reality 配置向导\n"
+      printf "8) 查看 VLESS Reality 参数\n"
+    else
+      printf "7) VLESS Reality 配置向导（模块缺失）\n"
+      printf "8) 查看 VLESS Reality 参数（模块缺失）\n"
+    fi
+    printf "9) 卸载\n"
     printf "0) 退出\n\n"
 
     read -r -p "请选择操作: " choice
@@ -2468,6 +2501,22 @@ main_menu() {
         pause
         ;;
       7)
+        if [[ "$VLESS_REALITY_MODULE_LOADED" == "true" ]]; then
+          vless_reality_wizard_flow
+        else
+          warn "VLESS Reality 模块缺失，无法执行该功能。请更新脚本后重试。"
+        fi
+        pause
+        ;;
+      8)
+        if [[ "$VLESS_REALITY_MODULE_LOADED" == "true" ]]; then
+          show_vless_reality_parameters_flow
+        else
+          warn "VLESS Reality 模块缺失，无法执行该功能。请更新脚本后重试。"
+        fi
+        pause
+        ;;
+      9)
         uninstall_menu_flow
         pause
         ;;
@@ -2486,6 +2535,7 @@ main_menu() {
 main() {
   require_root
   require_commands
+  load_vless_reality_module || true
   main_menu
 }
 

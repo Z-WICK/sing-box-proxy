@@ -26,10 +26,13 @@ sudo ./sing-box-proxy-manager.sh
 
 新建 AnyTLS 时，脚本会先检查 `443`。如果 `443` 已被占用，会默认改用 `8443`；如果当前机器已经有现成的 AnyTLS 服务，脚本会优先保留现有端口。
 
+VLESS Reality 已拆分为独立模块（`scripts/modules/vless_reality.sh`）。`curl | bash` 入口会自动下载该模块；如果模块下载失败，脚本会提示并仅保留 AnyTLS 功能。
+
 ## 目录
 
 - `sing-box-proxy-manager.sh`：兼容旧习惯的入口脚本，实际实现位于 `scripts/`
-- `scripts/`：主脚本
+- `scripts/sing-box-proxy-manager.sh`：主脚本（菜单与通用能力）
+- `scripts/modules/vless_reality.sh`：VLESS + Reality + Vision 模块
 - `tools/`：辅助脚本，例如导入配置的 HTTP 服务
 - `docs/reference/`：整理后的上游参考文档
 - `data/`：运行时生成的元数据和客户端导入文件，仅远端会使用
@@ -39,6 +42,7 @@ sudo ./sing-box-proxy-manager.sh
 远端机器 `/root/sing-box-proxy` 与本地保持同样结构：
 
 - `scripts/`
+- `scripts/modules/`
 - `tools/`
 - `docs/reference/`
 - `data/metadata/`

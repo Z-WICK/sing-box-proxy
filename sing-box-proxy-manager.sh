@@ -15,12 +15,22 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-TMP_SCRIPT="$(mktemp -t sing-box-proxy-manager.XXXXXX.sh)"
+TMP_ROOT="$(mktemp -d -t sing-box-proxy-manager.XXXXXX)"
+TMP_SCRIPT_DIR="${TMP_ROOT}/scripts"
+TMP_MODULE_DIR="${TMP_SCRIPT_DIR}/modules"
+TMP_SCRIPT="${TMP_SCRIPT_DIR}/sing-box-proxy-manager.sh"
+TMP_MODULE="${TMP_MODULE_DIR}/vless_reality.sh"
 cleanup() {
-  rm -f "${TMP_SCRIPT}"
+  rm -rf "${TMP_ROOT}"
 }
 trap cleanup EXIT
 
+mkdir -p "${TMP_MODULE_DIR}"
+
 curl -fsSL "${RAW_BASE_URL}/scripts/sing-box-proxy-manager.sh" -o "${TMP_SCRIPT}"
+if ! curl -fsSL "${RAW_BASE_URL}/scripts/modules/vless_reality.sh" -o "${TMP_MODULE}"; then
+  printf "警告：下载 VLESS Reality 模块失败，仅可使用 AnyTLS 功能。\n" >&2
+  rm -f "${TMP_MODULE}"
+fi
 chmod +x "${TMP_SCRIPT}"
 exec "${TMP_SCRIPT}" "$@"
