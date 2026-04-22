@@ -853,6 +853,27 @@ print('')
 PY
 }
 
+config_has_anytls_inbound() {
+  local config_path="$1"
+  local parsed has_anytls
+  has_anytls="false"
+
+  parsed="$(extract_anytls_tls_info "$config_path")"
+  if [[ -z "$parsed" ]]; then
+    return 1
+  fi
+
+  while IFS=$'\t' read -r key value; do
+    case "$key" in
+      has_anytls)
+        has_anytls="$value"
+        ;;
+    esac
+  done <<< "$parsed"
+
+  [[ "$has_anytls" == "true" ]]
+}
+
 cleanup_client_import_files_for_service() {
   local service_name="$1"
   local service_base base_dir removed_file
@@ -1709,6 +1730,83 @@ show_anytls_parameters_flow() {
   show_anytls_parameters_for_service "$CURRENT_SERVICE_NAME"
 }
 
+adopt_existing_anytls_flow() {
+  local service_name="$1"
+  local config_path
+
+  service_name="$(normalize_service_name "$service_name")"
+  if ! service_exists "$service_name"; then
+    die "未找到服务: ${service_name}"
+  fi
+
+  config_path="$(extract_config_path_from_service "$service_name")"
+  if [[ -z "$config_path" || ! -f "$config_path" ]]; then
+    die "未找到配置文件: ${config_path}"
+  fi
+
+  if ! config_has_anytls_inbound "$config_path"; then
+    die "配置中未找到 AnyTLS inbound: ${config_path}"
+  fi
+
+  local client_server client_sni skip_cert_verify publish_http_links import_token
+  local metadata_loaded
+  client_server="$(default_server_identity)"
+  client_sni="$client_server"
+  skip_cert_verify="false"
+  publish_http_links="false"
+  import_token=""
+
+  metadata_loaded="$(load_anytls_client_metadata "$service_name")"
+  if [[ -n "$metadata_loaded" ]]; then
+    while IFS=$'\t' read -r key value; do
+      case "$key" in
+        client_server)
+          if [[ -n "$value" ]]; then
+            client_server="$value"
+          fi
+          ;;
+        client_sni)
+          if [[ -n "$value" ]]; then
+            client_sni="$value"
+          fi
+          ;;
+        skip_cert_verify)
+          if [[ -n "$value" ]]; then
+            skip_cert_verify="$value"
+          fi
+          ;;
+        publish_http_links)
+          if [[ -n "$value" ]]; then
+            publish_http_links="$value"
+          fi
+          ;;
+        import_token)
+          if [[ -n "$value" ]]; then
+            import_token="$value"
+          fi
+          ;;
+      esac
+    done <<< "$metadata_loaded"
+  fi
+
+  if ! validate_client_server "$client_server"; then
+    client_server="$(default_server_identity)"
+  fi
+
+  if [[ -z "$client_sni" ]]; then
+    client_sni="$client_server"
+  fi
+
+  if [[ -n "$import_token" ]] && ! validate_import_token "$import_token"; then
+    import_token=""
+  fi
+
+  save_anytls_client_metadata "$service_name" "$client_server" "$client_sni" "$skip_cert_verify" "$publish_http_links" "$import_token"
+  ok "已接管现有 AnyTLS 配置，未修改 ${config_path} 或 ${service_name}"
+
+  show_anytls_parameters_for_service "$service_name" || true
+}
+
 anytls_wizard_flow() {
   if [[ ! -x "$BINARY_PATH" ]]; then
     die "未找到 sing-box 二进制，请先执行安装。"
@@ -1723,6 +1821,15 @@ anytls_wizard_flow() {
   fi
 
   config_path="${existing_config_path:-$ANYTLS_STANDARD_CONFIG_PATH}"
+
+  if [[ -n "$existing_config_path" && -f "$config_path" ]] && config_has_anytls_inbound "$config_path"; then
+    info "检测到现有 AnyTLS 服务: ${CURRENT_SERVICE_NAME}"
+    info "当前配置文件: ${config_path}"
+    if prompt_yes_no "接管现有配置并保持当前 AnyTLS 不变？" "y"; then
+      adopt_existing_anytls_flow "$CURRENT_SERVICE_NAME"
+      return 0
+    fi
+  fi
 
   local listen_addr listen_port
   listen_addr="$ANYTLS_STANDARD_LISTEN_ADDR"
