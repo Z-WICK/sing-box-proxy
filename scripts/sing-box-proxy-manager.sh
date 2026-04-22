@@ -212,6 +212,115 @@ pick_available_anytls_listen_port() {
   die "检测到 ${preferred_port} 和 ${fallback_port} 都已被占用，请先处理端口冲突。"
 }
 
+service_owns_listen_port() {
+  local service_name="$1"
+  local listen_port="$2"
+
+  SERVICE_NAME="$service_name" LISTEN_PORT="$listen_port" python3 - <<'PY'
+import glob
+import os
+import pathlib
+import re
+
+service_name = os.environ['SERVICE_NAME']
+listen_port = int(os.environ['LISTEN_PORT'])
+
+status_path = pathlib.Path('/run/systemd/system')
+if not status_path.exists():
+    raise SystemExit(1)
+
+try:
+    import subprocess
+    main_pid_text = subprocess.check_output(
+        ['systemctl', 'show', '-p', 'MainPID', '--value', service_name],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+except Exception:
+    raise SystemExit(1)
+
+if not main_pid_text.isdigit():
+    raise SystemExit(1)
+
+main_pid = int(main_pid_text)
+if main_pid <= 0:
+    raise SystemExit(1)
+
+socket_inodes = set()
+for fd_path in glob.glob(f'/proc/{main_pid}/fd/*'):
+    try:
+        target = os.readlink(fd_path)
+    except OSError:
+        continue
+    match = re.fullmatch(r'socket:\[(\d+)\]', target)
+    if match:
+        socket_inodes.add(match.group(1))
+
+if not socket_inodes:
+    raise SystemExit(1)
+
+def owns_listener(table_path: str) -> bool:
+    try:
+        with open(table_path, 'r', encoding='utf-8') as fp:
+            lines = fp.readlines()[1:]
+    except OSError:
+        return False
+
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 10:
+            continue
+        local_address = parts[1]
+        state = parts[3]
+        inode = parts[9]
+        if state != '0A':
+            continue
+        try:
+            port = int(local_address.split(':', 1)[1], 16)
+        except Exception:
+            continue
+        if port == listen_port and inode in socket_inodes:
+            return True
+    return False
+
+if owns_listener('/proc/net/tcp') or owns_listener('/proc/net/tcp6'):
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+pick_existing_anytls_listen_port() {
+  local service_name="$1"
+  local preferred_port="${2:-$ANYTLS_STANDARD_LISTEN_PORT}"
+  local fallback_port="${3:-$ANYTLS_FALLBACK_LISTEN_PORT}"
+  local listen_addr="${4:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+
+  if ! is_listen_port_occupied "$listen_addr" "$preferred_port"; then
+    printf "%s" "$preferred_port"
+    return 0
+  fi
+
+  if service_owns_listen_port "$service_name" "$preferred_port"; then
+    printf "%s" "$preferred_port"
+    return 0
+  fi
+
+  warn "检测到 ${listen_addr}:${preferred_port} 已被其他进程占用，默认改用 ${fallback_port}"
+
+  if ! is_listen_port_occupied "$listen_addr" "$fallback_port"; then
+    printf "%s" "$fallback_port"
+    return 0
+  fi
+
+  if service_owns_listen_port "$service_name" "$fallback_port"; then
+    printf "%s" "$fallback_port"
+    return 0
+  fi
+
+  die "检测到 ${preferred_port} 和 ${fallback_port} 都不可用，请先处理端口冲突。"
+}
+
 validate_client_server() {
   local value="$1"
 
@@ -1997,6 +2106,7 @@ migrate_existing_anytls_flow() {
 
   listen_addr="${listen_addr:-$ANYTLS_STANDARD_LISTEN_ADDR}"
   listen_port="${listen_port:-$ANYTLS_STANDARD_LISTEN_PORT}"
+  listen_port="$(pick_existing_anytls_listen_port "$service_name" "$listen_port" "$ANYTLS_FALLBACK_LISTEN_PORT" "$listen_addr")"
 
   if [[ -z "$anytls_password" ]]; then
     die "未能从现有配置中读取 AnyTLS 密码: ${config_path}"
@@ -2064,8 +2174,20 @@ anytls_wizard_flow() {
   config_path="${existing_config_path:-$ANYTLS_STANDARD_CONFIG_PATH}"
 
   if [[ -n "$existing_config_path" && -f "$config_path" ]] && config_has_anytls_inbound "$config_path"; then
+    local existing_listen_addr existing_port conflict_target_port conflict_target_addr
+    existing_listen_addr="$(extract_anytls_inbound_details "$config_path" | awk -F '\t' '$1 == "listen" {print $2; exit}')"
+    existing_port="$(extract_anytls_inbound_details "$config_path" | awk -F '\t' '$1 == "listen_port" {print $2; exit}')"
+    conflict_target_addr="${existing_listen_addr:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+    conflict_target_port="${existing_port:-$ANYTLS_STANDARD_LISTEN_PORT}"
     info "检测到现有 AnyTLS 服务: ${CURRENT_SERVICE_NAME}"
     info "当前配置文件: ${config_path}"
+    if is_listen_port_occupied "$conflict_target_addr" "$conflict_target_port" && ! service_owns_listen_port "$CURRENT_SERVICE_NAME" "$conflict_target_port"; then
+      warn "检测到当前 AnyTLS 端口 ${conflict_target_port} 已被其他进程占用，保持不变会继续起不来。"
+      if prompt_yes_no "按脚本重配当前 AnyTLS，并默认改用 ${ANYTLS_FALLBACK_LISTEN_PORT}？" "y"; then
+        migrate_existing_anytls_flow "$CURRENT_SERVICE_NAME"
+        return 0
+      fi
+    fi
     if prompt_yes_no "接管现有配置并保持当前 AnyTLS 不变？" "y"; then
       adopt_existing_anytls_flow "$CURRENT_SERVICE_NAME"
       return 0
