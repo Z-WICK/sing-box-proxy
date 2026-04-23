@@ -1074,50 +1074,60 @@ print_header() {
   printf "\n"
 }
 
-main_menu() {
+proxy_menu_flow() {
   while true; do
-    local -a protocol_handlers=()
-    local protocol_option_start protocol_option
-    local uninstall_option
     local i handler
 
-    protocol_option_start=5
-    protocol_option="$protocol_option_start"
+    printf "\nProxy 菜单：\n"
 
+    if (( ${#PROTOCOL_MENU_LABELS[@]} == 0 )); then
+      printf "  （当前没有可用协议模块）\n"
+    else
+      for i in "${!PROTOCOL_MENU_LABELS[@]}"; do
+        printf "%d) %s\n" "$((i + 1))" "${PROTOCOL_MENU_LABELS[$i]}"
+      done
+    fi
+
+    printf "0) 返回\n\n"
+    read -r -p "请选择 Proxy 操作: " choice
+
+    if [[ "$choice" == "0" ]]; then
+      return 0
+    fi
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+      warn "无效选项。"
+      continue
+    fi
+
+    if (( choice < 1 || choice > ${#PROTOCOL_MENU_HANDLERS[@]} )); then
+      warn "无效选项。"
+      continue
+    fi
+
+    handler="${PROTOCOL_MENU_HANDLERS[$((choice - 1))]}"
+    if ! declare -F "$handler" >/dev/null 2>&1; then
+      warn "菜单处理函数不存在: ${handler}"
+      continue
+    fi
+
+    "$handler"
+    pause
+  done
+}
+
+main_menu() {
+  while true; do
     print_header
     printf "1) 安装 sing-box\n"
     printf "2) 更新 sing-box\n"
     printf "3) 配置 systemd 服务\n"
     printf "4) 查看状态\n"
-
-    for i in "${!PROTOCOL_MENU_LABELS[@]}"; do
-      printf "%d) %s\n" "$protocol_option" "${PROTOCOL_MENU_LABELS[$i]}"
-      protocol_handlers[$protocol_option]="${PROTOCOL_MENU_HANDLERS[$i]}"
-      ((protocol_option++))
-    done
-
-    uninstall_option="$protocol_option"
-    printf "%d) 卸载\n" "$uninstall_option"
+    printf "5) Proxy\n"
+    printf "6) 卸载\n"
     printf "0) 退出\n\n"
 
     read -r -p "请选择操作: " choice
-
-    if [[ "$choice" == "$uninstall_option" ]]; then
-      uninstall_menu_flow
-      pause
-      continue
-    fi
-
-    handler="${protocol_handlers[$choice]-}"
-    if [[ -n "$handler" ]]; then
-      if declare -F "$handler" >/dev/null 2>&1; then
-        "$handler"
-      else
-        warn "菜单处理函数不存在: ${handler}"
-      fi
-      pause
-      continue
-    fi
 
     case "$choice" in
       1)
@@ -1134,6 +1144,13 @@ main_menu() {
         ;;
       4)
         show_status
+        pause
+        ;;
+      5)
+        proxy_menu_flow
+        ;;
+      6)
+        uninstall_menu_flow
         pause
         ;;
       0)

@@ -30,6 +30,8 @@ AnyTLS 与 VLESS Reality 都已拆分为独立模块（`scripts/modules/*.sh`）
 
 `curl | bash` 入口会自动下载主脚本和全部协议模块；某个模块下载失败时会给出提示，并只禁用对应协议功能，不影响其他模块。
 
+当前菜单结构是一级主菜单 + 二级 `Proxy` 菜单。协议相关功能都收进 `Proxy` 子菜单里，后续新增协议时不会继续挤占主菜单。
+
 ## 目录
 
 - `sing-box-proxy-manager.sh`：兼容旧习惯的入口脚本，实际实现位于 `scripts/`
