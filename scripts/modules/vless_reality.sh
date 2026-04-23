@@ -9,8 +9,8 @@
 : "${VLESS_REALITY_METADATA_DIR:=${DATA_DIR}/vless-reality-meta}"
 
 register_vless_reality_menu_items() {
-  register_protocol_menu_item "VLESS Reality 配置向导" "vless_reality_wizard_flow"
-  register_protocol_menu_item "查看 VLESS Reality 参数" "show_vless_reality_parameters_flow"
+  register_protocol_menu_item "VLESS" "Reality 配置向导" "vless_reality_wizard_flow"
+  register_protocol_menu_item "VLESS" "查看 Reality 参数" "show_vless_reality_parameters_flow"
 }
 
 generate_uuid_string() {

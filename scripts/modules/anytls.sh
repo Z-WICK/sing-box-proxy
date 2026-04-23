@@ -16,8 +16,8 @@
 : "${CLIENT_IMPORT_HTTP_PORT:=18080}"
 
 register_anytls_menu_items() {
-  register_protocol_menu_item "AnyTLS 配置向导" "anytls_wizard_flow"
-  register_protocol_menu_item "查看 AnyTLS 参数" "show_anytls_parameters_flow"
+  register_protocol_menu_item "AnyTLS" "配置向导" "anytls_wizard_flow"
+  register_protocol_menu_item "AnyTLS" "查看参数" "show_anytls_parameters_flow"
 }
 
 metadata_path_for_service() {

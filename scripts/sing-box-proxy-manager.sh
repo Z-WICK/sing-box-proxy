@@ -45,8 +45,10 @@ COLOR_BLUE='\033[34m'
 CURRENT_SERVICE_NAME=""
 ANYTLS_MODULE_LOADED="false"
 VLESS_REALITY_MODULE_LOADED="false"
-PROTOCOL_MENU_LABELS=()
-PROTOCOL_MENU_HANDLERS=()
+PROTOCOL_GROUP_LABELS=()
+PROTOCOL_ITEM_GROUPS=()
+PROTOCOL_ITEM_LABELS=()
+PROTOCOL_ITEM_HANDLERS=()
 
 validate_service_name() {
   local service_name="$1"
@@ -70,11 +72,31 @@ die() {
   exit 1
 }
 
+has_protocol_group() {
+  local target="$1"
+  local group_label
+
+  for group_label in "${PROTOCOL_GROUP_LABELS[@]}"; do
+    if [[ "$group_label" == "$target" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 register_protocol_menu_item() {
-  local label="$1"
-  local handler="$2"
-  PROTOCOL_MENU_LABELS+=("$label")
-  PROTOCOL_MENU_HANDLERS+=("$handler")
+  local group_label="$1"
+  local item_label="$2"
+  local handler="$3"
+
+  if ! has_protocol_group "$group_label"; then
+    PROTOCOL_GROUP_LABELS+=("$group_label")
+  fi
+
+  PROTOCOL_ITEM_GROUPS+=("$group_label")
+  PROTOCOL_ITEM_LABELS+=("$item_label")
+  PROTOCOL_ITEM_HANDLERS+=("$handler")
 }
 
 load_protocol_module() {
@@ -102,8 +124,10 @@ load_protocol_module() {
 }
 
 load_protocol_modules() {
-  PROTOCOL_MENU_LABELS=()
-  PROTOCOL_MENU_HANDLERS=()
+  PROTOCOL_GROUP_LABELS=()
+  PROTOCOL_ITEM_GROUPS=()
+  PROTOCOL_ITEM_LABELS=()
+  PROTOCOL_ITEM_HANDLERS=()
   load_protocol_module "anytls.sh" "ANYTLS_MODULE_LOADED" "register_anytls_menu_items" "AnyTLS" || true
   load_protocol_module "vless_reality.sh" "VLESS_REALITY_MODULE_LOADED" "register_vless_reality_menu_items" "VLESS Reality" || true
 }
@@ -1076,20 +1100,20 @@ print_header() {
 
 proxy_menu_flow() {
   while true; do
-    local i handler
+    local i group_label
 
     printf "\nProxy 菜单：\n"
 
-    if (( ${#PROTOCOL_MENU_LABELS[@]} == 0 )); then
+    if (( ${#PROTOCOL_GROUP_LABELS[@]} == 0 )); then
       printf "  （当前没有可用协议模块）\n"
     else
-      for i in "${!PROTOCOL_MENU_LABELS[@]}"; do
-        printf "%d) %s\n" "$((i + 1))" "${PROTOCOL_MENU_LABELS[$i]}"
+      for i in "${!PROTOCOL_GROUP_LABELS[@]}"; do
+        printf "%d) %s\n" "$((i + 1))" "${PROTOCOL_GROUP_LABELS[$i]}"
       done
     fi
 
     printf "0) 返回\n\n"
-    read -r -p "请选择 Proxy 操作: " choice
+    read -r -p "请选择协议分类: " choice
 
     if [[ "$choice" == "0" ]]; then
       return 0
@@ -1100,12 +1124,57 @@ proxy_menu_flow() {
       continue
     fi
 
-    if (( choice < 1 || choice > ${#PROTOCOL_MENU_HANDLERS[@]} )); then
+    if (( choice < 1 || choice > ${#PROTOCOL_GROUP_LABELS[@]} )); then
       warn "无效选项。"
       continue
     fi
 
-    handler="${PROTOCOL_MENU_HANDLERS[$((choice - 1))]}"
+    group_label="${PROTOCOL_GROUP_LABELS[$((choice - 1))]}"
+    protocol_group_menu_flow "$group_label"
+  done
+}
+
+protocol_group_menu_flow() {
+  local group_label="$1"
+
+  while true; do
+    local i handler
+    local group_indexes=()
+
+    for i in "${!PROTOCOL_ITEM_GROUPS[@]}"; do
+      if [[ "${PROTOCOL_ITEM_GROUPS[$i]}" == "$group_label" ]]; then
+        group_indexes+=("$i")
+      fi
+    done
+
+    printf "\n%s 菜单：\n" "$group_label"
+
+    if (( ${#group_indexes[@]} == 0 )); then
+      printf "  （当前分类下没有可用操作）\n"
+    else
+      for i in "${!group_indexes[@]}"; do
+        printf "%d) %s\n" "$((i + 1))" "${PROTOCOL_ITEM_LABELS[${group_indexes[$i]}]}"
+      done
+    fi
+
+    printf "0) 返回\n\n"
+    read -r -p "请选择操作: " choice
+
+    if [[ "$choice" == "0" ]]; then
+      return 0
+    fi
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]]; then
+      warn "无效选项。"
+      continue
+    fi
+
+    if (( choice < 1 || choice > ${#group_indexes[@]} )); then
+      warn "无效选项。"
+      continue
+    fi
+
+    handler="${PROTOCOL_ITEM_HANDLERS[${group_indexes[$((choice - 1))]}]}"
     if ! declare -F "$handler" >/dev/null 2>&1; then
       warn "菜单处理函数不存在: ${handler}"
       continue
