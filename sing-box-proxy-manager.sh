@@ -27,7 +27,7 @@ trap cleanup EXIT
 mkdir -p "${TMP_MODULE_DIR}"
 
 curl -fsSL "${RAW_BASE_URL}/scripts/sing-box-proxy-manager.sh" -o "${TMP_SCRIPT}"
-for module_file in anytls.sh vless_reality.sh; do
+for module_file in anytls.sh vless_reality.sh socks5.sh; do
   if ! curl -fsSL "${RAW_BASE_URL}/scripts/modules/${module_file}" -o "${TMP_MODULE_DIR}/${module_file}"; then
     printf "警告：下载模块失败 %s，对应功能不可用。\n" "${module_file}" >&2
     rm -f "${TMP_MODULE_DIR}/${module_file}"

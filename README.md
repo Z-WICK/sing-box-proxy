@@ -24,13 +24,15 @@ chmod +x sing-box-proxy-manager.sh
 sudo ./sing-box-proxy-manager.sh
 ```
 
-新建 AnyTLS 时，脚本会先检查 `443`。如果 `443` 已被占用，会默认改用 `8443`；如果当前机器已经有现成的 AnyTLS 服务，脚本会优先保留现有端口。
+新建 AnyTLS 或 VLESS Reality 时，脚本会先检查 `443`。如果 `443` 已被占用，会默认改用 `8443`；如果当前机器已经有现成服务，脚本会优先保留现有端口。
 
-AnyTLS 与 VLESS Reality 都已拆分为独立模块（`scripts/modules/*.sh`）。主脚本只保留通用能力和菜单分发；后续新增协议可以按模块接入。
+SOCKS5 会默认创建独立的 `sing-box-socks5.service`，监听 `0.0.0.0:1080`，如果端口被占用会改用 `1081`。脚本会生成用户名和密码，不创建匿名公开代理。
+
+AnyTLS、VLESS Reality 和 SOCKS5 都已拆分为独立模块（`scripts/modules/*.sh`）。主脚本只保留通用能力和菜单分发；后续新增协议可以按模块接入。
 
 `curl | bash` 入口会自动下载主脚本和全部协议模块；某个模块下载失败时会给出提示，并只禁用对应协议功能，不影响其他模块。
 
-当前菜单结构是一级主菜单 + 二级 `Proxy` 菜单。协议相关功能都收进 `Proxy` 子菜单里，后续新增协议时不会继续挤占主菜单。
+当前菜单结构是一级主菜单 + 二级 `Proxy` 菜单 + 三级协议菜单。协议相关功能都收进 `Proxy` 子菜单里，后续新增协议时不会继续挤占主菜单。
 
 ## 目录
 
@@ -38,6 +40,7 @@ AnyTLS 与 VLESS Reality 都已拆分为独立模块（`scripts/modules/*.sh`）
 - `scripts/sing-box-proxy-manager.sh`：主脚本（菜单与通用能力）
 - `scripts/modules/anytls.sh`：AnyTLS 模块
 - `scripts/modules/vless_reality.sh`：VLESS + Reality + Vision 模块
+- `scripts/modules/socks5.sh`：SOCKS5 模块
 - `tools/`：辅助脚本，例如导入配置的 HTTP 服务
 - `docs/reference/`：整理后的上游参考文档
 - `data/`：运行时生成的元数据和客户端导入文件，仅远端会使用
@@ -47,7 +50,7 @@ AnyTLS 与 VLESS Reality 都已拆分为独立模块（`scripts/modules/*.sh`）
 主脚本提供了模块注册入口，新增协议时只需要：
 
 1. 在 `scripts/modules/` 新建协议模块文件
-2. 在模块里实现 `register_<protocol>_menu_items`，并调用 `register_protocol_menu_item "<菜单名>" "<处理函数>"`
+2. 在模块里实现 `register_<protocol>_menu_items`，并调用 `register_protocol_menu_item "<协议分类>" "<菜单项>" "<处理函数>"`
 3. 在主脚本 `load_protocol_modules()` 里增加一次 `load_protocol_module` 调用
 4. 在入口脚本 `sing-box-proxy-manager.sh` 的模块下载列表里增加该模块文件名
 
@@ -62,4 +65,5 @@ AnyTLS 与 VLESS Reality 都已拆分为独立模块（`scripts/modules/*.sh`）
 - `data/metadata/`
 - `data/client-import/`
 - `data/client-import-publish/`
+- `data/socks5-meta/`
 - `archive/`：不再直接使用、但先保留的旧文件

@@ -27,6 +27,13 @@ VLESS_REALITY_STANDARD_LISTEN_PORT="443"
 VLESS_REALITY_FALLBACK_LISTEN_PORT="8443"
 VLESS_REALITY_DEFAULT_FLOW="xtls-rprx-vision"
 VLESS_REALITY_METADATA_DIR="${DATA_DIR}/vless-reality-meta"
+SOCKS5_STANDARD_SERVICE_NAME="sing-box-socks5.service"
+SOCKS5_STANDARD_CONFIG_PATH="/etc/sing-box/socks5.json"
+SOCKS5_STANDARD_LISTEN_ADDR="0.0.0.0"
+SOCKS5_STANDARD_LISTEN_PORT="1080"
+SOCKS5_FALLBACK_LISTEN_PORT="1081"
+SOCKS5_DEFAULT_USERNAME="proxy"
+SOCKS5_METADATA_DIR="${DATA_DIR}/socks5-meta"
 CLIENT_IMPORT_DIR="${DATA_DIR}/client-import"
 CLIENT_IMPORT_PUBLISH_DIR="${DATA_DIR}/client-import-publish"
 CLIENT_IMPORT_HTTP_SERVICE="sing-box-import-http.service"
@@ -45,6 +52,7 @@ COLOR_BLUE='\033[34m'
 CURRENT_SERVICE_NAME=""
 ANYTLS_MODULE_LOADED="false"
 VLESS_REALITY_MODULE_LOADED="false"
+SOCKS5_MODULE_LOADED="false"
 PROTOCOL_GROUP_LABELS=()
 PROTOCOL_ITEM_GROUPS=()
 PROTOCOL_ITEM_LABELS=()
@@ -130,6 +138,7 @@ load_protocol_modules() {
   PROTOCOL_ITEM_HANDLERS=()
   load_protocol_module "anytls.sh" "ANYTLS_MODULE_LOADED" "register_anytls_menu_items" "AnyTLS" || true
   load_protocol_module "vless_reality.sh" "VLESS_REALITY_MODULE_LOADED" "register_vless_reality_menu_items" "VLESS Reality" || true
+  load_protocol_module "socks5.sh" "SOCKS5_MODULE_LOADED" "register_socks5_menu_items" "SOCKS5" || true
 }
 
 require_root() {
@@ -268,10 +277,10 @@ raise SystemExit(1)
 PY
 }
 
-pick_available_anytls_listen_port() {
-  local preferred_port="${1:-$ANYTLS_STANDARD_LISTEN_PORT}"
-  local fallback_port="${2:-$ANYTLS_FALLBACK_LISTEN_PORT}"
-  local listen_addr="${3:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+pick_available_listen_port() {
+  local preferred_port="$1"
+  local fallback_port="$2"
+  local listen_addr="$3"
 
   if ! is_listen_port_occupied "$listen_addr" "$preferred_port"; then
     printf "%s" "$preferred_port"
@@ -286,6 +295,13 @@ pick_available_anytls_listen_port() {
   fi
 
   die "检测到 ${preferred_port} 和 ${fallback_port} 都已被占用，请先处理端口冲突。"
+}
+
+pick_available_anytls_listen_port() {
+  local preferred_port="${1:-$ANYTLS_STANDARD_LISTEN_PORT}"
+  local fallback_port="${2:-$ANYTLS_FALLBACK_LISTEN_PORT}"
+  local listen_addr="${3:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+  pick_available_listen_port "$preferred_port" "$fallback_port" "$listen_addr"
 }
 
 service_owns_listen_port() {
@@ -366,11 +382,11 @@ raise SystemExit(1)
 PY
 }
 
-pick_existing_anytls_listen_port() {
+pick_existing_listen_port() {
   local service_name="$1"
-  local preferred_port="${2:-$ANYTLS_STANDARD_LISTEN_PORT}"
-  local fallback_port="${3:-$ANYTLS_FALLBACK_LISTEN_PORT}"
-  local listen_addr="${4:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+  local preferred_port="$2"
+  local fallback_port="$3"
+  local listen_addr="$4"
 
   if ! is_listen_port_occupied "$listen_addr" "$preferred_port"; then
     printf "%s" "$preferred_port"
@@ -395,6 +411,14 @@ pick_existing_anytls_listen_port() {
   fi
 
   die "检测到 ${preferred_port} 和 ${fallback_port} 都不可用，请先处理端口冲突。"
+}
+
+pick_existing_anytls_listen_port() {
+  local service_name="$1"
+  local preferred_port="${2:-$ANYTLS_STANDARD_LISTEN_PORT}"
+  local fallback_port="${3:-$ANYTLS_FALLBACK_LISTEN_PORT}"
+  local listen_addr="${4:-$ANYTLS_STANDARD_LISTEN_ADDR}"
+  pick_existing_listen_port "$service_name" "$preferred_port" "$fallback_port" "$listen_addr"
 }
 
 validate_client_server() {
@@ -754,9 +778,9 @@ uninstall_singbox_full_flow() {
     fi
   fi
 
-  if prompt_yes_no "删除 AnyTLS/VLESS 元数据和客户端导入文件？" "y"; then
-    rm -rf "$ANYTLS_METADATA_DIR" "$VLESS_REALITY_METADATA_DIR" "$CLIENT_IMPORT_DIR" "$CLIENT_IMPORT_PUBLISH_DIR"
-    ok "已删除 ${ANYTLS_METADATA_DIR}、${VLESS_REALITY_METADATA_DIR}、${CLIENT_IMPORT_DIR} 和 ${CLIENT_IMPORT_PUBLISH_DIR}"
+  if prompt_yes_no "删除 AnyTLS/VLESS/SOCKS5 元数据和客户端导入文件？" "y"; then
+    rm -rf "$ANYTLS_METADATA_DIR" "$VLESS_REALITY_METADATA_DIR" "$SOCKS5_METADATA_DIR" "$CLIENT_IMPORT_DIR" "$CLIENT_IMPORT_PUBLISH_DIR"
+    ok "已删除 ${ANYTLS_METADATA_DIR}、${VLESS_REALITY_METADATA_DIR}、${SOCKS5_METADATA_DIR}、${CLIENT_IMPORT_DIR} 和 ${CLIENT_IMPORT_PUBLISH_DIR}"
   fi
 
   systemctl daemon-reload
