@@ -7,6 +7,10 @@
 : "${VLESS_REALITY_FALLBACK_LISTEN_PORT:=8443}"
 : "${VLESS_REALITY_DEFAULT_FLOW:=xtls-rprx-vision}"
 : "${VLESS_REALITY_METADATA_DIR:=${DATA_DIR}/vless-reality-meta}"
+: "${VLESS_REALITY_HANDSHAKE_LISTEN_ADDR:=127.0.0.1}"
+: "${VLESS_REALITY_HANDSHAKE_LISTEN_PORT:=18443}"
+: "${VLESS_REALITY_HANDSHAKE_FALLBACK_LISTEN_PORT:=18444}"
+: "${VLESS_REALITY_HANDSHAKE_FILTER_TAG:=reality-handshake-filter-in}"
 
 register_vless_reality_menu_items() {
   register_protocol_menu_item "VLESS" "Reality 配置向导" "vless_reality_wizard_flow"
@@ -304,6 +308,12 @@ handshake = reality.get('handshake') if isinstance(reality.get('handshake'), dic
 short_ids = reality.get('short_id') if isinstance(reality.get('short_id'), list) else []
 short_id = short_ids[0] if short_ids else ''
 
+filter_inbound = None
+for inbound in data.get('inbounds') or []:
+    if isinstance(inbound, dict) and inbound.get('type') == 'direct' and inbound.get('tag') == 'reality-handshake-filter-in':
+        filter_inbound = inbound
+        break
+
 def emit(key, value):
     text = '' if value is None else str(value)
     print(f'{key}\t{text}')
@@ -318,6 +328,10 @@ emit('private_key', reality.get('private_key'))
 emit('short_id', short_id)
 emit('handshake_server', handshake.get('server'))
 emit('handshake_server_port', handshake.get('server_port'))
+emit('steal_protection', 'true' if filter_inbound is not None else 'false')
+if filter_inbound is not None:
+    emit('handshake_filter_listen', filter_inbound.get('listen'))
+    emit('handshake_filter_port', filter_inbound.get('listen_port'))
 PY
 }
 
@@ -351,6 +365,7 @@ write_vless_reality_config() {
   local server_name="$6"
   local private_key="$7"
   local short_id="$8"
+  local handshake_filter_listen_port="$9"
 
   mkdir -p "$(dirname "$config_path")"
 
@@ -362,6 +377,9 @@ write_vless_reality_config() {
   VLESS_SERVER_NAME="$server_name" \
   VLESS_PRIVATE_KEY="$private_key" \
   VLESS_SHORT_ID="$short_id" \
+  VLESS_HANDSHAKE_FILTER_ADDR="$VLESS_REALITY_HANDSHAKE_LISTEN_ADDR" \
+  VLESS_HANDSHAKE_FILTER_PORT="$handshake_filter_listen_port" \
+  VLESS_HANDSHAKE_FILTER_TAG="$VLESS_REALITY_HANDSHAKE_FILTER_TAG" \
   python3 - <<'PY'
 import json
 import os
@@ -375,6 +393,9 @@ flow = os.environ['VLESS_FLOW']
 server_name = os.environ['VLESS_SERVER_NAME']
 private_key = os.environ['VLESS_PRIVATE_KEY']
 short_id = os.environ['VLESS_SHORT_ID']
+handshake_filter_addr = os.environ['VLESS_HANDSHAKE_FILTER_ADDR']
+handshake_filter_port = int(os.environ['VLESS_HANDSHAKE_FILTER_PORT'])
+handshake_filter_tag = os.environ['VLESS_HANDSHAKE_FILTER_TAG']
 
 config = {
     'log': {
@@ -399,13 +420,22 @@ config = {
                 'reality': {
                     'enabled': True,
                     'handshake': {
-                        'server': server_name,
-                        'server_port': 443,
+                        'server': handshake_filter_addr,
+                        'server_port': handshake_filter_port,
                     },
                     'private_key': private_key,
                     'short_id': [short_id],
                 },
             },
+        },
+        {
+            'type': 'direct',
+            'tag': handshake_filter_tag,
+            'listen': handshake_filter_addr,
+            'listen_port': handshake_filter_port,
+            'network': 'tcp',
+            'override_address': server_name,
+            'override_port': 443,
         }
     ],
     'outbounds': [
@@ -415,6 +445,25 @@ config = {
         }
     ],
     'route': {
+        'rules': [
+            {
+                'inbound': [handshake_filter_tag],
+                'action': 'sniff',
+                'sniffer': ['tls'],
+                'timeout': '1s',
+            },
+            {
+                'inbound': [handshake_filter_tag],
+                'domain': [server_name],
+                'action': 'route',
+                'outbound': 'direct',
+            },
+            {
+                'inbound': [handshake_filter_tag],
+                'action': 'reject',
+                'method': 'drop',
+            },
+        ],
         'final': 'direct',
     },
 }
@@ -443,7 +492,7 @@ show_vless_reality_parameters_for_service() {
 
   parsed="$(extract_vless_reality_inbound_details "$config_path")"
 
-  local found listen_addr listen_port uuid_value flow_value server_name private_key short_id handshake_server handshake_server_port
+  local found listen_addr listen_port uuid_value flow_value server_name private_key short_id handshake_server handshake_server_port steal_protection handshake_filter_listen handshake_filter_port
   found="false"
   listen_addr=""
   listen_port=""
@@ -454,6 +503,9 @@ show_vless_reality_parameters_for_service() {
   short_id=""
   handshake_server=""
   handshake_server_port=""
+  steal_protection="false"
+  handshake_filter_listen=""
+  handshake_filter_port=""
 
   while IFS=$'\t' read -r key value; do
     case "$key" in
@@ -467,6 +519,9 @@ show_vless_reality_parameters_for_service() {
       short_id) short_id="$value" ;;
       handshake_server) handshake_server="$value" ;;
       handshake_server_port) handshake_server_port="$value" ;;
+      steal_protection) steal_protection="$value" ;;
+      handshake_filter_listen) handshake_filter_listen="$value" ;;
+      handshake_filter_port) handshake_filter_port="$value" ;;
     esac
   done <<< "$parsed"
 
@@ -519,6 +574,11 @@ show_vless_reality_parameters_for_service() {
   printf "  SNI         : %s\n" "$server_name"
   printf "  Short ID    : %s\n" "$short_id"
   printf "  Handshake   : %s:%s\n" "$handshake_server" "$handshake_server_port"
+  printf "  防偷跑      : %s\n" "$steal_protection"
+  if [[ "$steal_protection" == "true" ]]; then
+    printf "  过滤入口    : %s:%s\n" "$handshake_filter_listen" "$handshake_filter_port"
+    printf "  允许 SNI    : %s\n" "$server_name"
+  fi
   printf "  配置文件    : %s\n" "$config_path"
 
   if [[ -n "$public_key" ]]; then
@@ -556,7 +616,7 @@ vless_reality_wizard_flow() {
   fi
   config_path="${existing_config_path:-$VLESS_REALITY_STANDARD_CONFIG_PATH}"
 
-  local existing_found existing_listen_addr existing_listen_port existing_uuid existing_flow existing_server_name existing_private_key existing_short_id
+  local existing_found existing_listen_addr existing_listen_port existing_uuid existing_flow existing_server_name existing_private_key existing_short_id existing_handshake_filter_port
   existing_found="false"
   existing_listen_addr=""
   existing_listen_port=""
@@ -565,6 +625,7 @@ vless_reality_wizard_flow() {
   existing_server_name=""
   existing_private_key=""
   existing_short_id=""
+  existing_handshake_filter_port=""
 
   if [[ -f "$config_path" ]]; then
     local existing_parsed
@@ -579,6 +640,7 @@ vless_reality_wizard_flow() {
         server_name) existing_server_name="$value" ;;
         private_key) existing_private_key="$value" ;;
         short_id) existing_short_id="$value" ;;
+        handshake_filter_port) existing_handshake_filter_port="$value" ;;
       esac
     done <<< "$existing_parsed"
   fi
@@ -586,7 +648,13 @@ vless_reality_wizard_flow() {
   if [[ "$existing_found" == "true" ]]; then
     info "检测到现有 VLESS Reality 服务: ${CURRENT_SERVICE_NAME}"
     info "当前配置文件: ${config_path}"
-    if prompt_yes_no "接管现有 VLESS Reality 配置并保持不变？" "y"; then
+    local keep_existing_default
+    keep_existing_default="y"
+    if [[ -z "$existing_handshake_filter_port" ]]; then
+      warn "现有 VLESS Reality 配置未启用防偷跑模式，建议重写配置。"
+      keep_existing_default="n"
+    fi
+    if prompt_yes_no "接管现有 VLESS Reality 配置并保持不变？" "$keep_existing_default"; then
       show_vless_reality_parameters_for_service "$CURRENT_SERVICE_NAME" || true
       return 0
     fi
@@ -602,6 +670,13 @@ vless_reality_wizard_flow() {
 
   local reality_server_name
   reality_server_name="$(prompt_reality_server_name "$existing_server_name")"
+
+  local handshake_filter_port
+  if [[ "$existing_found" == "true" && -n "$existing_handshake_filter_port" ]]; then
+    handshake_filter_port="$(pick_existing_listen_port "$CURRENT_SERVICE_NAME" "$existing_handshake_filter_port" "$VLESS_REALITY_HANDSHAKE_FALLBACK_LISTEN_PORT" "$VLESS_REALITY_HANDSHAKE_LISTEN_ADDR")"
+  else
+    handshake_filter_port="$(pick_available_listen_port "$VLESS_REALITY_HANDSHAKE_LISTEN_PORT" "$VLESS_REALITY_HANDSHAKE_FALLBACK_LISTEN_PORT" "$VLESS_REALITY_HANDSHAKE_LISTEN_ADDR")"
+  fi
 
   local uuid_value
   uuid_value="${existing_uuid,,}"
@@ -680,7 +755,7 @@ vless_reality_wizard_flow() {
     ok "已创建服务备份: ${service_backup_path}"
   fi
 
-  write_vless_reality_config "$config_path" "$listen_addr" "$listen_port" "$uuid_value" "$flow_value" "$reality_server_name" "$private_key" "$short_id"
+  write_vless_reality_config "$config_path" "$listen_addr" "$listen_port" "$uuid_value" "$flow_value" "$reality_server_name" "$private_key" "$short_id" "$handshake_filter_port"
   validate_config_file "$config_path" || die "生成的配置无效: ${config_path}"
   ok "已写入 VLESS Reality 配置: ${config_path}"
 

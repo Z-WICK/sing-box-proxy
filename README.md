@@ -26,6 +26,8 @@ sudo ./sing-box-proxy-manager.sh
 
 新建 AnyTLS 或 VLESS Reality 时，脚本会先检查 `443`。如果 `443` 已被占用，会默认改用 `8443`；如果当前机器已经有现成服务，脚本会优先保留现有端口。
 
+VLESS Reality 默认启用防偷跑模式。脚本会把 Reality fallback 接到本机内部过滤入口，只允许伪装域名对应的 TLS SNI 被转发，其它 fallback 连接会被拒绝。
+
 SOCKS5 会默认创建独立的 `sing-box-socks5.service`，监听 `0.0.0.0:1080`，如果端口被占用会改用 `1081`。脚本会生成用户名和密码，不创建匿名公开代理。
 
 AnyTLS、VLESS Reality 和 SOCKS5 都已拆分为独立模块（`scripts/modules/*.sh`）。主脚本只保留通用能力和菜单分发；后续新增协议可以按模块接入。
