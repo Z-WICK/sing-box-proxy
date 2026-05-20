@@ -6,7 +6,8 @@
 : "${VLESS_REALITY_STANDARD_LISTEN_PORT:=443}"
 : "${VLESS_REALITY_FALLBACK_LISTEN_PORT:=8443}"
 : "${VLESS_REALITY_DEFAULT_FLOW:=xtls-rprx-vision}"
-: "${VLESS_REALITY_METADATA_DIR:=${DATA_DIR}/vless-reality-meta}"
+: "${VLESS_REALITY_METADATA_DIR:=/etc/sing-box/vless-reality-meta}"
+: "${VLESS_REALITY_LEGACY_METADATA_DIR:=${DATA_DIR}/vless-reality-meta}"
 : "${VLESS_REALITY_HANDSHAKE_LISTEN_ADDR:=127.0.0.1}"
 : "${VLESS_REALITY_HANDSHAKE_LISTEN_PORT:=18443}"
 : "${VLESS_REALITY_HANDSHAKE_FALLBACK_LISTEN_PORT:=18444}"
@@ -168,6 +169,17 @@ vless_reality_metadata_path_for_service() {
   printf "%s/%s.json" "$VLESS_REALITY_METADATA_DIR" "${service_name%.service}"
 }
 
+vless_reality_legacy_metadata_path_for_service() {
+  local service_name
+  service_name="$(normalize_service_name "$1")"
+  printf "%s/%s.json" "$VLESS_REALITY_LEGACY_METADATA_DIR" "${service_name%.service}"
+}
+
+validate_reality_public_key() {
+  local value="$1"
+  [[ "$value" =~ ^[A-Za-z0-9_-]{40,80}$ ]]
+}
+
 save_vless_reality_metadata() {
   local service_name="$1"
   local client_server="$2"
@@ -198,6 +210,10 @@ load_vless_reality_metadata() {
   local service_name="$1"
   local metadata_path
   metadata_path="$(vless_reality_metadata_path_for_service "$service_name")"
+
+  if [[ ! -f "$metadata_path" ]]; then
+    metadata_path="$(vless_reality_legacy_metadata_path_for_service "$service_name")"
+  fi
 
   if [[ ! -f "$metadata_path" ]]; then
     return 0
@@ -723,13 +739,21 @@ vless_reality_wizard_flow() {
   local private_key
   private_key="$existing_private_key"
   if [[ -n "$private_key" ]]; then
-    local keep_private_default
-    keep_private_default="y"
     if [[ -z "$public_key" ]]; then
-      warn "当前未记录对应的 Reality 公钥，建议重新生成密钥以输出完整 URI。"
-      keep_private_default="n"
-    fi
-    if ! prompt_yes_no "沿用现有 Reality 私钥？" "$keep_private_default"; then
+      local input_public_key
+      warn "当前未记录对应的 Reality 公钥，无法输出完整 URI。"
+      read -r -p "现有私钥对应 Public Key（留空则重新生成密钥）: " input_public_key
+      if [[ -n "$input_public_key" ]]; then
+        if validate_reality_public_key "$input_public_key"; then
+          public_key="$input_public_key"
+        else
+          warn "Public Key 格式不合法，将重新生成 Reality 密钥。"
+          private_key=""
+        fi
+      else
+        private_key=""
+      fi
+    elif ! prompt_yes_no "沿用现有 Reality 私钥？" "y"; then
       private_key=""
     fi
   fi
