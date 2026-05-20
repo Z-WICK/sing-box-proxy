@@ -6,7 +6,8 @@
 : "${SOCKS5_STANDARD_LISTEN_PORT:=1080}"
 : "${SOCKS5_FALLBACK_LISTEN_PORT:=1081}"
 : "${SOCKS5_DEFAULT_USERNAME:=proxy}"
-: "${SOCKS5_METADATA_DIR:=${DATA_DIR}/socks5-meta}"
+: "${SOCKS5_METADATA_DIR:=/etc/sing-box/socks5-meta}"
+: "${SOCKS5_LEGACY_METADATA_DIR:=${DATA_DIR}/socks5-meta}"
 
 register_socks5_menu_items() {
   register_protocol_menu_item "SOCKS5" "配置向导" "socks5_wizard_flow"
@@ -17,6 +18,12 @@ socks5_metadata_path_for_service() {
   local service_name
   service_name="$(normalize_service_name "$1")"
   printf "%s/%s.json" "$SOCKS5_METADATA_DIR" "${service_name%.service}"
+}
+
+socks5_legacy_metadata_path_for_service() {
+  local service_name
+  service_name="$(normalize_service_name "$1")"
+  printf "%s/%s.json" "$SOCKS5_LEGACY_METADATA_DIR" "${service_name%.service}"
 }
 
 save_socks5_metadata() {
@@ -39,31 +46,53 @@ payload = {
     'client_server': os.environ.get('SOCKS5_CLIENT_SERVER', ''),
 }
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+path.chmod(0o600)
 PY
 }
 
 load_socks5_metadata() {
   local service_name="$1"
-  local metadata_path
+  local metadata_path primary_metadata_path
   metadata_path="$(socks5_metadata_path_for_service "$service_name")"
+  primary_metadata_path="$metadata_path"
+
+  if [[ ! -f "$metadata_path" ]]; then
+    metadata_path="$(socks5_legacy_metadata_path_for_service "$service_name")"
+  fi
 
   if [[ ! -f "$metadata_path" ]]; then
     return 0
   fi
 
-  SOCKS5_METADATA_PATH="$metadata_path" python3 - <<'PY'
+  SOCKS5_METADATA_PATH="$metadata_path" \
+  SOCKS5_PRIMARY_METADATA_PATH="$primary_metadata_path" \
+  python3 - <<'PY'
 import json
 import os
+from pathlib import Path
 
 path = os.environ['SOCKS5_METADATA_PATH']
-with open(path, 'r', encoding='utf-8') as fp:
-    data = json.load(fp)
+primary_path = Path(os.environ['SOCKS5_PRIMARY_METADATA_PATH'])
+try:
+    with open(path, 'r', encoding='utf-8') as fp:
+        data = json.load(fp)
+except Exception:
+    raise SystemExit(0)
 
 def emit(key, value):
     text = '' if value is None else str(value)
     print(f'{key}\t{text}')
 
-emit('client_server', data.get('client_server'))
+payload = {
+    'client_server': data.get('client_server', ''),
+}
+
+if Path(path) != primary_path:
+    primary_path.parent.mkdir(parents=True, exist_ok=True)
+    primary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    primary_path.chmod(0o600)
+
+emit('client_server', payload.get('client_server'))
 PY
 }
 

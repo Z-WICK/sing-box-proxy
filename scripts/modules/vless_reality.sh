@@ -203,13 +203,15 @@ payload = {
     'public_key': os.environ.get('VLESS_PUBLIC_KEY', ''),
 }
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+path.chmod(0o600)
 PY
 }
 
 load_vless_reality_metadata() {
   local service_name="$1"
-  local metadata_path
+  local metadata_path primary_metadata_path
   metadata_path="$(vless_reality_metadata_path_for_service "$service_name")"
+  primary_metadata_path="$metadata_path"
 
   if [[ ! -f "$metadata_path" ]]; then
     metadata_path="$(vless_reality_legacy_metadata_path_for_service "$service_name")"
@@ -219,20 +221,37 @@ load_vless_reality_metadata() {
     return 0
   fi
 
-  VLESS_METADATA_PATH="$metadata_path" python3 - <<'PY'
+  VLESS_METADATA_PATH="$metadata_path" \
+  VLESS_PRIMARY_METADATA_PATH="$primary_metadata_path" \
+  python3 - <<'PY'
 import json
 import os
+from pathlib import Path
 
 path = os.environ['VLESS_METADATA_PATH']
-with open(path, 'r', encoding='utf-8') as fp:
-    data = json.load(fp)
+primary_path = Path(os.environ['VLESS_PRIMARY_METADATA_PATH'])
+try:
+    with open(path, 'r', encoding='utf-8') as fp:
+        data = json.load(fp)
+except Exception:
+    raise SystemExit(0)
 
 def emit(key, value):
     text = '' if value is None else str(value)
     print(f'{key}\t{text}')
 
-emit('client_server', data.get('client_server'))
-emit('public_key', data.get('public_key'))
+payload = {
+    'client_server': data.get('client_server', ''),
+    'public_key': data.get('public_key', ''),
+}
+
+if Path(path) != primary_path:
+    primary_path.parent.mkdir(parents=True, exist_ok=True)
+    primary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    primary_path.chmod(0o600)
+
+emit('client_server', payload.get('client_server'))
+emit('public_key', payload.get('public_key'))
 PY
 }
 
@@ -572,6 +591,11 @@ show_vless_reality_parameters_for_service() {
     client_server="$(default_server_identity)"
   fi
 
+  if [[ -n "$public_key" ]] && ! validate_reality_public_key "$public_key"; then
+    warn "元数据中的 Reality Public Key 格式无效，已忽略。"
+    public_key=""
+  fi
+
   local service_base node_name vless_uri
   service_base="${service_name%.service}"
   node_name="VLESS-Reality-${service_base}"
@@ -735,24 +759,17 @@ vless_reality_wizard_flow() {
   if ! validate_client_server "$client_server"; then
     client_server="$(default_server_identity)"
   fi
+  if [[ -n "$public_key" ]] && ! validate_reality_public_key "$public_key"; then
+    warn "元数据中的 Reality Public Key 格式无效，将重新生成 Reality 密钥。"
+    public_key=""
+  fi
 
   local private_key
   private_key="$existing_private_key"
   if [[ -n "$private_key" ]]; then
     if [[ -z "$public_key" ]]; then
-      local input_public_key
-      warn "当前未记录对应的 Reality 公钥，无法输出完整 URI。"
-      read -r -p "现有私钥对应 Public Key（留空则重新生成密钥）: " input_public_key
-      if [[ -n "$input_public_key" ]]; then
-        if validate_reality_public_key "$input_public_key"; then
-          public_key="$input_public_key"
-        else
-          warn "Public Key 格式不合法，将重新生成 Reality 密钥。"
-          private_key=""
-        fi
-      else
-        private_key=""
-      fi
+      warn "当前未记录对应的 Reality 公钥，已重新生成密钥以保证 URI 可用。"
+      private_key=""
     elif ! prompt_yes_no "沿用现有 Reality 私钥？" "y"; then
       private_key=""
     fi

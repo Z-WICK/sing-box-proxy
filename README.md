@@ -67,6 +67,6 @@ AnyTLS、VLESS Reality 和 SOCKS5 都已拆分为独立模块（`scripts/modules
 - `data/metadata/`
 - `data/client-import/`
 - `data/client-import-publish/`
-- `data/socks5-meta/`
 - `/etc/sing-box/vless-reality-meta/`：VLESS Reality 客户端导入所需的 Public Key 元数据
+- `/etc/sing-box/socks5-meta/`：SOCKS5 客户端回显所需的服务器地址元数据
 - `archive/`：不再直接使用、但先保留的旧文件
