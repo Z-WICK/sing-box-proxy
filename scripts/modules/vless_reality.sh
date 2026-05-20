@@ -723,7 +723,13 @@ vless_reality_wizard_flow() {
   local private_key
   private_key="$existing_private_key"
   if [[ -n "$private_key" ]]; then
-    if ! prompt_yes_no "沿用现有 Reality 私钥？" "y"; then
+    local keep_private_default
+    keep_private_default="y"
+    if [[ -z "$public_key" ]]; then
+      warn "当前未记录对应的 Reality 公钥，建议重新生成密钥以输出完整 URI。"
+      keep_private_default="n"
+    fi
+    if ! prompt_yes_no "沿用现有 Reality 私钥？" "$keep_private_default"; then
       private_key=""
     fi
   fi
