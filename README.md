@@ -30,7 +30,9 @@ VLESS Reality 默认启用防偷跑模式。脚本会把 Reality fallback 接到
 
 SOCKS5 会默认创建独立的 `sing-box-socks5.service`，监听 `0.0.0.0:1080`，如果端口被占用会改用 `1081`。脚本会生成用户名和密码，不创建匿名公开代理。
 
-AnyTLS、VLESS Reality 和 SOCKS5 都已拆分为独立模块（`scripts/modules/*.sh`）。主脚本只保留通用能力和菜单分发；后续新增协议可以按模块接入。
+Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前只接入官方下载地址可用的 Snell v4/v5，默认协议版本为 v5；配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。
+
+AnyTLS、VLESS Reality、SOCKS5 和 Snell 都已拆分为独立模块（`scripts/modules/*.sh`）。主脚本只保留通用能力和菜单分发；后续新增协议可以按模块接入。
 
 `curl | bash` 入口会自动下载主脚本和全部协议模块；某个模块下载失败时会给出提示，并只禁用对应协议功能，不影响其他模块。
 
@@ -43,6 +45,7 @@ AnyTLS、VLESS Reality 和 SOCKS5 都已拆分为独立模块（`scripts/modules
 - `scripts/modules/anytls.sh`：AnyTLS 模块
 - `scripts/modules/vless_reality.sh`：VLESS + Reality + Vision 模块
 - `scripts/modules/socks5.sh`：SOCKS5 模块
+- `scripts/modules/snell.sh`：Snell Server 模块，管理 Surge 官方 `snell-server`
 - `tools/`：辅助脚本，例如导入配置的 HTTP 服务
 - `docs/reference/`：整理后的上游参考文档
 - `data/`：运行时生成的元数据和客户端导入文件，仅远端会使用
@@ -69,4 +72,5 @@ AnyTLS、VLESS Reality 和 SOCKS5 都已拆分为独立模块（`scripts/modules
 - `data/client-import-publish/`
 - `/etc/sing-box/vless-reality-meta/`：VLESS Reality 客户端导入所需的 Public Key 元数据
 - `/etc/sing-box/socks5-meta/`：SOCKS5 客户端回显所需的服务器地址元数据
+- `/etc/snell/`：Snell Server 配置与版本记录
 - `archive/`：不再直接使用、但先保留的旧文件

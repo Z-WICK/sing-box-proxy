@@ -36,6 +36,9 @@ SOCKS5_FALLBACK_LISTEN_PORT="1081"
 SOCKS5_DEFAULT_USERNAME="proxy"
 SOCKS5_METADATA_DIR="${SOCKS5_METADATA_DIR:-/etc/sing-box/socks5-meta}"
 SOCKS5_LEGACY_METADATA_DIR="${DATA_DIR}/socks5-meta"
+SNELL_SERVICE_NAME="snell-server.service"
+SNELL_BINARY_PATH="/usr/local/bin/snell-server"
+SNELL_CONFIG_PATH="/etc/snell/config.conf"
 CLIENT_IMPORT_DIR="${DATA_DIR}/client-import"
 CLIENT_IMPORT_PUBLISH_DIR="${DATA_DIR}/client-import-publish"
 CLIENT_IMPORT_HTTP_SERVICE="sing-box-import-http.service"
@@ -55,6 +58,7 @@ CURRENT_SERVICE_NAME=""
 ANYTLS_MODULE_LOADED="false"
 VLESS_REALITY_MODULE_LOADED="false"
 SOCKS5_MODULE_LOADED="false"
+SNELL_MODULE_LOADED="false"
 PROTOCOL_GROUP_LABELS=()
 PROTOCOL_ITEM_GROUPS=()
 PROTOCOL_ITEM_LABELS=()
@@ -141,6 +145,7 @@ load_protocol_modules() {
   load_protocol_module "anytls.sh" "ANYTLS_MODULE_LOADED" "register_anytls_menu_items" "AnyTLS" || true
   load_protocol_module "vless_reality.sh" "VLESS_REALITY_MODULE_LOADED" "register_vless_reality_menu_items" "VLESS Reality" || true
   load_protocol_module "socks5.sh" "SOCKS5_MODULE_LOADED" "register_socks5_menu_items" "SOCKS5" || true
+  load_protocol_module "snell.sh" "SNELL_MODULE_LOADED" "register_snell_menu_items" "Snell" || true
 }
 
 require_root() {
@@ -1054,6 +1059,18 @@ show_status() {
 
   default_service="$(pick_default_service)"
   printf "\n当前脚本默认服务: %s\n" "$default_service"
+
+  printf "\nSnell Server：\n"
+  if systemctl cat "$SNELL_SERVICE_NAME" >/dev/null 2>&1; then
+    printf "  - %s | active=%s | enabled=%s | binary=%s | config=%s\n" \
+      "$SNELL_SERVICE_NAME" \
+      "$(systemctl is-active "$SNELL_SERVICE_NAME" 2>/dev/null || true)" \
+      "$(systemctl is-enabled "$SNELL_SERVICE_NAME" 2>/dev/null || true)" \
+      "$SNELL_BINARY_PATH" \
+      "$SNELL_CONFIG_PATH"
+  else
+    printf "  （无）\n"
+  fi
 }
 
 install_flow() {
