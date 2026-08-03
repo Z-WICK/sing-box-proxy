@@ -5,6 +5,7 @@
 : "${VLESS_REALITY_STANDARD_LISTEN_ADDR:=::}"
 : "${VLESS_REALITY_STANDARD_LISTEN_PORT:=443}"
 : "${VLESS_REALITY_FALLBACK_LISTEN_PORT:=8443}"
+: "${VLESS_REALITY_PUBLIC_LISTEN_PORT:=}"
 : "${VLESS_REALITY_DEFAULT_FLOW:=xtls-rprx-vision}"
 : "${VLESS_REALITY_METADATA_DIR:=/etc/sing-box/vless-reality-meta}"
 : "${VLESS_REALITY_LEGACY_METADATA_DIR:=${DATA_DIR}/vless-reality-meta}"
@@ -16,6 +17,11 @@
 register_vless_reality_menu_items() {
   register_protocol_menu_item "VLESS" "Reality 配置向导" "vless_reality_wizard_flow"
   register_protocol_menu_item "VLESS" "查看 Reality 参数" "show_vless_reality_parameters_flow"
+}
+
+resolve_vless_reality_client_port() {
+  local internal_port="$1"
+  resolve_public_listen_port "$internal_port" "${VLESS_REALITY_PUBLIC_LISTEN_PORT:-}" "${PUBLIC_HAPROXY_CONFIG_PATH:-/etc/haproxy/haproxy.cfg}"
 }
 
 generate_uuid_string() {
@@ -596,19 +602,23 @@ show_vless_reality_parameters_for_service() {
     public_key=""
   fi
 
-  local service_base node_name vless_uri
+  local service_base node_name vless_uri client_port
   service_base="${service_name%.service}"
   node_name="VLESS-Reality-${service_base}"
+  client_port="$(resolve_vless_reality_client_port "$listen_port")"
   vless_uri=""
   if [[ -n "$public_key" && -n "$short_id" ]]; then
-    vless_uri="$(build_vless_reality_uri "$client_server" "$listen_port" "$uuid_value" "$server_name" "$public_key" "$short_id" "$flow_value" "$node_name")"
+    vless_uri="$(build_vless_reality_uri "$client_server" "$client_port" "$uuid_value" "$server_name" "$public_key" "$short_id" "$flow_value" "$node_name")"
   fi
 
   printf "\nVLESS Reality 参数：\n"
   printf "  服务名      : %s\n" "$service_name"
   printf "  服务器      : %s\n" "$client_server"
   printf "  监听地址    : %s\n" "$listen_addr"
-  printf "  端口        : %s\n" "$listen_port"
+  printf "  端口        : %s\n" "$client_port"
+  if [[ "$client_port" != "$listen_port" ]]; then
+    printf "  内部监听    : %s:%s\n" "${listen_addr:-*}" "$listen_port"
+  fi
   printf "  UUID        : %s\n" "$uuid_value"
   printf "  Flow        : %s\n" "$flow_value"
   printf "  SNI         : %s\n" "$server_name"

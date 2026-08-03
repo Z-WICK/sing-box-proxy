@@ -12,6 +12,7 @@
 : "${SNELL_DEFAULT_PROTOCOL_VERSION:=6}"
 : "${SNELL_DEFAULT_LISTEN_PORT:=2345}"
 : "${SNELL_FALLBACK_LISTEN_PORT:=2346}"
+: "${SNELL_PUBLIC_LISTEN_PORT:=}"
 : "${SNELL_DEFAULT_IPV6:=false}"
 : "${SNELL_DEFAULT_OBFS:=off}"
 : "${SNELL_DEFAULT_TFO:=true}"
@@ -26,6 +27,11 @@ register_snell_menu_items() {
   register_protocol_menu_item "Snell" "升级到 Snell 6" "upgrade_snell_to_v6_flow"
   register_protocol_menu_item "Snell" "切换/更新服务端版本" "update_snell_server_flow"
   register_protocol_menu_item "Snell" "卸载 Snell Server" "uninstall_snell_flow"
+}
+
+resolve_snell_client_port() {
+  local internal_port="$1"
+  resolve_public_listen_port "$internal_port" "${SNELL_PUBLIC_LISTEN_PORT:-}" "${PUBLIC_HAPROXY_CONFIG_PATH:-/etc/haproxy/haproxy.cfg}"
 }
 
 validate_snell_port() {
@@ -768,7 +774,7 @@ show_snell_parameters_for_service() {
     client_server="localhost"
   fi
 
-  local service_base node_name surge_line installed_release active_state enabled_state
+  local service_base node_name client_port surge_line installed_release active_state enabled_state
   installed_release="$(installed_snell_release_version)"
   if ! validate_snell_version "$protocol_version"; then
     protocol_version="$(snell_protocol_version_from_release "$installed_release")"
@@ -781,7 +787,8 @@ show_snell_parameters_for_service() {
 
   service_base="${service_name%.service}"
   node_name="Snell-${service_base}"
-  surge_line="$(build_snell_surge_line "$node_name" "$client_server" "$port" "$psk" "$protocol_version" "$tfo" "$obfs" "$obfs_host" "$mode")"
+  client_port="$(resolve_snell_client_port "$port")"
+  surge_line="$(build_snell_surge_line "$node_name" "$client_server" "$client_port" "$psk" "$protocol_version" "$tfo" "$obfs" "$obfs_host" "$mode")"
   active_state="$(systemctl is-active "$service_name" 2>/dev/null || true)"
   enabled_state="$(systemctl is-enabled "$service_name" 2>/dev/null || true)"
 
@@ -794,7 +801,10 @@ show_snell_parameters_for_service() {
   fi
   printf "  服务器      : %s\n" "$client_server"
   printf "  监听        : %s\n" "$listen"
-  printf "  端口        : %s\n" "$port"
+  printf "  端口        : %s\n" "$client_port"
+  if [[ "$client_port" != "$port" ]]; then
+    printf "  内部监听    : %s:%s\n" "${listen:-*}" "$port"
+  fi
   printf "  PSK         : %s\n" "$psk"
   printf "  协议版本    : %s\n" "$protocol_version"
   if [[ "$protocol_version" == "6" ]]; then
