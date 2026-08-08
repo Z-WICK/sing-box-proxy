@@ -8,6 +8,8 @@
 : "${ANYTLS_FALLBACK_LISTEN_PORT:=8443}"
 : "${ANYTLS_STANDARD_CERT_PATH:=/etc/sing-box/cert.pem}"
 : "${ANYTLS_STANDARD_KEY_PATH:=/etc/sing-box/key.pem}"
+: "${ANYTLS_PUBLIC_LISTEN_PORT:=}"
+: "${ANYTLS_HAPROXY_CONFIG_PATH:=/etc/haproxy/haproxy.cfg}"
 : "${ANYTLS_METADATA_DIR:=${DATA_DIR}/metadata}"
 : "${CLIENT_IMPORT_DIR:=${DATA_DIR}/client-import}"
 : "${CLIENT_IMPORT_PUBLISH_DIR:=${DATA_DIR}/client-import-publish}"
@@ -18,6 +20,11 @@
 register_anytls_menu_items() {
   register_protocol_menu_item "AnyTLS" "配置向导" "anytls_wizard_flow"
   register_protocol_menu_item "AnyTLS" "查看参数" "show_anytls_parameters_flow"
+}
+
+resolve_anytls_client_port() {
+  local internal_port="$1"
+  resolve_public_listen_port "$internal_port" "${ANYTLS_PUBLIC_LISTEN_PORT:-}" "${ANYTLS_HAPROXY_CONFIG_PATH:-${PUBLIC_HAPROXY_CONFIG_PATH:-/etc/haproxy/haproxy.cfg}}"
 }
 
 metadata_path_for_service() {
@@ -985,8 +992,11 @@ PY
     import_token=""
   fi
 
+  local client_port
+  client_port="$(resolve_anytls_client_port "$listen_port")"
+
   local profile_data
-  profile_data="$(write_client_import_profiles "$service_name" "$client_server" "$listen_port" "$anytls_password" "$tls_enabled" "$client_sni" "$skip_cert_verify" "$import_token")"
+  profile_data="$(write_client_import_profiles "$service_name" "$client_server" "$client_port" "$anytls_password" "$tls_enabled" "$client_sni" "$skip_cert_verify" "$import_token")"
 
   local surge_file clash_file loon_file egern_file file_base surge_line loon_line egern_uri
   surge_file=""
@@ -1042,7 +1052,10 @@ PY
 
   printf "\nAnyTLS 导入参数：\n"
   printf "  服务器      : %s\n" "$client_server"
-  printf "  端口        : %s\n" "$listen_port"
+  printf "  端口        : %s\n" "$client_port"
+  if [[ "$client_port" != "$listen_port" ]]; then
+    printf "  内部监听    : %s:%s\n" "${listen_addr:-*}" "$listen_port"
+  fi
   printf "  密码        : %s\n" "$anytls_password"
   printf "  TLS         : %s\n" "$tls_enabled"
   if [[ "$tls_enabled" == "true" ]]; then

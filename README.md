@@ -26,11 +26,13 @@ sudo ./sing-box-proxy-manager.sh
 
 新建 AnyTLS 或 VLESS Reality 时，脚本会先检查 `443`。如果 `443` 已被占用，会默认改用 `8443`；如果当前机器已经有现成服务，脚本会优先保留现有端口。
 
+如果 AnyTLS、VLESS Reality、SOCKS5 或 Snell 由 HAProxy 从公网端口转发到本机内部端口，查看参数和生成的客户端配置会自动使用 HAProxy 前端端口；也可以分别通过 `ANYTLS_PUBLIC_LISTEN_PORT`、`VLESS_REALITY_PUBLIC_LISTEN_PORT`、`SOCKS5_PUBLIC_LISTEN_PORT` 或 `SNELL_PUBLIC_LISTEN_PORT` 显式指定公网端口。内部监听端口只用于服务自身，不会直接展示给客户端。
+
 VLESS Reality 默认启用防偷跑模式。脚本会把 Reality fallback 接到本机内部过滤入口，只允许伪装域名对应的 TLS SNI 被转发，其它 fallback 连接会被拒绝。
 
 SOCKS5 会默认创建独立的 `sing-box-socks5.service`，监听 `0.0.0.0:1080`，如果端口被占用会改用 `1081`。脚本会生成用户名和密码，不创建匿名公开代理。
 
-Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前支持 Snell v4/v5 和 v6 Beta，默认新装 v6（当前官方构建 `v6.0.0b4`）；配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。Snell 菜单提供 v4/v5 到 v6 的保配置升级，迁移时保留监听端口、PSK、DNS 与 TFO，失败会回滚二进制和配置。v6 官方仅提供 `amd64`、`i386`、`aarch64` 构建，不支持 `armv7l`。
+Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前支持 Snell v4/v5 和 v6，默认新装 v6；安装或更新时会从 Surge 官方发布页自动解析所选协议的最新构建，获取失败时回退到脚本内置版本（当前 v6 回退版本为 `v6.0.0rc`）。配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。Snell 菜单提供 v4/v5 到 v6 的保配置升级，迁移时保留监听端口、PSK、DNS、TFO、`egress-interface` 和未知配置项，失败会回滚二进制和配置。Snell v6 的 PSK 必须为 16-255 位；启用 TFO 时仅设置 `net.ipv4.tcp_fastopen`，不修改全局 BBR 或其他网络参数。v6 官方仅提供 `amd64`、`i386`、`aarch64` 构建，不支持 `armv7l`。
 
 AnyTLS、VLESS Reality、SOCKS5 和 Snell 都已拆分为独立模块（`scripts/modules/*.sh`）。主脚本只保留通用能力和菜单分发；后续新增协议可以按模块接入。
 

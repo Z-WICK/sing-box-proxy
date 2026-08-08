@@ -47,6 +47,7 @@ CLIENT_IMPORT_HTTP_PORT="18080"
 SCRIPT_SOURCE_PATH="${BASH_SOURCE[0]-$0}"
 SCRIPT_DIR="$(cd -- "$(dirname "${SCRIPT_SOURCE_PATH}")" && pwd)"
 MODULES_DIR="${SCRIPT_DIR}/modules"
+: "${PUBLIC_HAPROXY_CONFIG_PATH:=/etc/haproxy/haproxy.cfg}"
 
 COLOR_RESET='\033[0m'
 COLOR_RED='\033[31m'
@@ -500,6 +501,134 @@ format_host_for_url() {
     return 0
   fi
   printf "%s" "$host"
+}
+
+is_valid_public_listen_port() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  (( port >= 1 && port <= 65535 ))
+}
+
+detect_public_listen_port() {
+  local internal_port="$1"
+  local override_port="${2:-}"
+  local haproxy_config_path="${3:-${PUBLIC_HAPROXY_CONFIG_PATH:-/etc/haproxy/haproxy.cfg}}"
+
+  if is_valid_public_listen_port "$override_port"; then
+    printf "%s" "$override_port"
+    return 0
+  fi
+
+  if [[ -z "$haproxy_config_path" || ! -f "$haproxy_config_path" ]]; then
+    return 1
+  fi
+
+  PUBLIC_HAPROXY_CONFIG="$haproxy_config_path" \
+  PUBLIC_INTERNAL_PORT="$internal_port" \
+  python3 - <<'PY'
+import os
+import re
+import shlex
+
+config_path = os.environ['PUBLIC_HAPROXY_CONFIG']
+try:
+    internal_port = int(os.environ['PUBLIC_INTERNAL_PORT'])
+except (TypeError, ValueError):
+    raise SystemExit(1)
+
+
+def endpoint_port(value):
+    if value.isdigit():
+        return int(value)
+    match = re.search(r':([0-9]+)$', value)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+sections = []
+current = None
+default_backend = None
+
+try:
+    with open(config_path, 'r', encoding='utf-8') as fp:
+        for raw_line in fp:
+            try:
+                tokens = shlex.split(raw_line, comments=True, posix=True)
+            except ValueError:
+                continue
+            if not tokens:
+                continue
+
+            directive = tokens[0].lower()
+            if directive in ('frontend', 'backend', 'listen', 'defaults'):
+                name = tokens[1] if len(tokens) > 1 else directive
+                current = {
+                    'kind': directive,
+                    'name': name,
+                    'bind_ports': [],
+                    'server_ports': [],
+                    'backend_refs': [],
+                }
+                sections.append(current)
+                continue
+
+            if current is None:
+                continue
+
+            if directive == 'bind' and len(tokens) >= 2 and current['kind'] in ('frontend', 'listen'):
+                for token in tokens[1:]:
+                    port = endpoint_port(token)
+                    if port is not None:
+                        current['bind_ports'].append(port)
+                        break
+            elif directive == 'server' and len(tokens) >= 3 and current['kind'] in ('backend', 'listen'):
+                port = endpoint_port(tokens[2])
+                if port is not None:
+                    current['server_ports'].append(port)
+            elif directive in ('default_backend', 'use_backend') and len(tokens) >= 2 and current['kind'] == 'frontend':
+                current['backend_refs'].append(tokens[1])
+            elif directive == 'default_backend' and len(tokens) >= 2 and current['kind'] == 'defaults':
+                default_backend = tokens[1]
+except OSError:
+    raise SystemExit(1)
+
+matching_backends = {
+    section['name']
+    for section in sections
+    if section['kind'] in ('backend', 'listen') and internal_port in section['server_ports']
+}
+
+for section in sections:
+    if section['kind'] == 'listen':
+        if internal_port in section['server_ports']:
+            for port in section['bind_ports']:
+                print(port)
+                raise SystemExit(0)
+        continue
+
+    if section['kind'] != 'frontend':
+        continue
+
+    backend_refs = section['backend_refs'] or ([default_backend] if default_backend else [])
+    if not matching_backends.intersection(backend_refs):
+        continue
+    for port in section['bind_ports']:
+        print(port)
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+resolve_public_listen_port() {
+  local internal_port="$1"
+  local override_port="${2:-}"
+  local haproxy_config_path="${3:-${PUBLIC_HAPROXY_CONFIG_PATH:-/etc/haproxy/haproxy.cfg}}"
+  local public_port
+
+  public_port="$(detect_public_listen_port "$internal_port" "$override_port" "$haproxy_config_path" 2>/dev/null || true)"
+  printf "%s" "${public_port:-$internal_port}"
 }
 
 is_safe_removal_path() {

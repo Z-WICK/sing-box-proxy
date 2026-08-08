@@ -5,6 +5,7 @@
 : "${SOCKS5_STANDARD_LISTEN_ADDR:=0.0.0.0}"
 : "${SOCKS5_STANDARD_LISTEN_PORT:=1080}"
 : "${SOCKS5_FALLBACK_LISTEN_PORT:=1081}"
+: "${SOCKS5_PUBLIC_LISTEN_PORT:=}"
 : "${SOCKS5_DEFAULT_USERNAME:=proxy}"
 : "${SOCKS5_METADATA_DIR:=/etc/sing-box/socks5-meta}"
 : "${SOCKS5_LEGACY_METADATA_DIR:=${DATA_DIR}/socks5-meta}"
@@ -12,6 +13,11 @@
 register_socks5_menu_items() {
   register_protocol_menu_item "SOCKS5" "配置向导" "socks5_wizard_flow"
   register_protocol_menu_item "SOCKS5" "查看参数" "show_socks5_parameters_flow"
+}
+
+resolve_socks5_client_port() {
+  local internal_port="$1"
+  resolve_public_listen_port "$internal_port" "${SOCKS5_PUBLIC_LISTEN_PORT:-}" "${PUBLIC_HAPROXY_CONFIG_PATH:-/etc/haproxy/haproxy.cfg}"
 }
 
 socks5_metadata_path_for_service() {
@@ -333,17 +339,21 @@ show_socks5_parameters_for_service() {
     client_server="$(default_server_identity)"
   fi
 
-  local service_base node_name socks_uri curl_proxy
+  local service_base node_name socks_uri curl_proxy client_port
   service_base="${service_name%.service}"
   node_name="SOCKS5-${service_base}"
-  socks_uri="$(build_socks5_uri "$client_server" "$listen_port" "$username" "$password" "$node_name")"
-  curl_proxy="$(build_socks5_curl_proxy "$client_server" "$listen_port" "$username" "$password")"
+  client_port="$(resolve_socks5_client_port "$listen_port")"
+  socks_uri="$(build_socks5_uri "$client_server" "$client_port" "$username" "$password" "$node_name")"
+  curl_proxy="$(build_socks5_curl_proxy "$client_server" "$client_port" "$username" "$password")"
 
   printf "\nSOCKS5 参数：\n"
   printf "  服务名      : %s\n" "$service_name"
   printf "  服务器      : %s\n" "$client_server"
   printf "  监听地址    : %s\n" "$listen_addr"
-  printf "  端口        : %s\n" "$listen_port"
+  printf "  端口        : %s\n" "$client_port"
+  if [[ "$client_port" != "$listen_port" ]]; then
+    printf "  内部监听    : %s:%s\n" "${listen_addr:-*}" "$listen_port"
+  fi
   printf "  用户名      : %s\n" "$username"
   printf "  密码        : %s\n" "$password"
   printf "  配置文件    : %s\n" "$config_path"
