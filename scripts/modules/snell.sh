@@ -8,7 +8,9 @@
 : "${SNELL_VERSION_FILE:=${SNELL_CONFIG_DIR}/ver.txt}"
 : "${SNELL_V4_RELEASE_VERSION:=4.1.1}"
 : "${SNELL_V5_RELEASE_VERSION:=5.0.1}"
-: "${SNELL_V6_RELEASE_VERSION:=6.0.0b4}"
+: "${SNELL_V6_RELEASE_VERSION:=6.0.0rc}"
+: "${SNELL_RELEASE_NOTES_URL:=https://kb.nssurge.com/surge-knowledge-base/release-notes/snell.md}"
+: "${SNELL_FETCH_LATEST_RELEASES:=true}"
 : "${SNELL_DEFAULT_PROTOCOL_VERSION:=6}"
 : "${SNELL_DEFAULT_LISTEN_PORT:=2345}"
 : "${SNELL_FALLBACK_LISTEN_PORT:=2346}"
@@ -20,6 +22,7 @@
 : "${SNELL_DEFAULT_OBFS_HOST:=icloud.com}"
 : "${SNELL_DEFAULT_MODE:=default}"
 : "${SNELL_DEFAULT_DNS_IP_PREFERENCE:=default}"
+: "${SNELL_TFO_SYSCTL_PATH:=/etc/sysctl.d/99-snell-tfo.conf}"
 
 register_snell_menu_items() {
   register_protocol_menu_item "Snell" "配置向导" "snell_wizard_flow"
@@ -42,7 +45,17 @@ validate_snell_port() {
 
 validate_snell_psk() {
   local value="$1"
-  [[ "$value" =~ ^[A-Za-z0-9_.@:=+-]{8,128}$ ]]
+  local protocol_version="${2:-}"
+  local min_length=8
+  local max_length=128
+
+  if [[ "$protocol_version" == "6" ]]; then
+    min_length=16
+    max_length=255
+  fi
+
+  [[ "$value" =~ ^[A-Za-z0-9_.@:=+-]+$ ]] || return 1
+  (( ${#value} >= min_length && ${#value} <= max_length ))
 }
 
 validate_snell_obfs() {
@@ -71,6 +84,44 @@ validate_snell_dns_ip_preference() {
 validate_snell_bool() {
   local value="$1"
   [[ "$value" == "true" || "$value" == "false" ]]
+}
+
+apply_snell_tfo_kernel_setting() {
+  local tfo="$1"
+
+  [[ "$tfo" == "true" ]] || return 0
+
+  if (( EUID != 0 )); then
+    warn "当前不是 root，无法写入 TCP Fast Open 内核参数；继续保留 Snell 配置中的 tfo=true。"
+    return 0
+  fi
+
+  if ! command -v sysctl >/dev/null 2>&1; then
+    warn "未找到 sysctl，无法启用 TCP Fast Open 内核参数；继续保留 Snell 配置中的 tfo=true。"
+    return 0
+  fi
+
+  if ! sysctl -w net.ipv4.tcp_fastopen=3 >/dev/null 2>&1; then
+    warn "内核不接受 net.ipv4.tcp_fastopen=3；继续保留 Snell 配置中的 tfo=true。"
+    return 0
+  fi
+
+  local sysctl_dir
+  sysctl_dir="$(dirname "$SNELL_TFO_SYSCTL_PATH")"
+  if [[ ! -d "$sysctl_dir" ]]; then
+    warn "未找到 sysctl 持久化目录: ${sysctl_dir}；本次运行已启用 TCP Fast Open。"
+    return 0
+  fi
+
+  if [[ -e "$SNELL_TFO_SYSCTL_PATH" ]] && ! grep -Fq "managed by sing-box-proxy" "$SNELL_TFO_SYSCTL_PATH"; then
+    warn "已存在非本脚本管理的 sysctl 文件: ${SNELL_TFO_SYSCTL_PATH}；仅应用本次运行的 TCP Fast Open 设置。"
+    return 0
+  fi
+
+  {
+    printf "# managed by sing-box-proxy\n"
+    printf "net.ipv4.tcp_fastopen = 3\n"
+  } > "$SNELL_TFO_SYSCTL_PATH"
 }
 
 validate_snell_obfs_host() {
@@ -142,13 +193,51 @@ detect_snell_arch() {
 
 snell_release_version_for_protocol() {
   local protocol_version="$1"
+  local fallback_version latest_version
 
   case "$protocol_version" in
-    4) printf "%s" "$SNELL_V4_RELEASE_VERSION" ;;
-    5) printf "%s" "$SNELL_V5_RELEASE_VERSION" ;;
-    6) printf "%s" "$SNELL_V6_RELEASE_VERSION" ;;
+    4) fallback_version="$SNELL_V4_RELEASE_VERSION" ;;
+    5) fallback_version="$SNELL_V5_RELEASE_VERSION" ;;
+    6) fallback_version="$SNELL_V6_RELEASE_VERSION" ;;
     *) die "不支持的 Snell 协议版本: ${protocol_version}" ;;
   esac
+
+  if [[ "$SNELL_FETCH_LATEST_RELEASES" == "true" ]]; then
+    latest_version="$(fetch_latest_snell_release_version "$protocol_version" || true)"
+    if [[ -n "$latest_version" ]]; then
+      printf "%s" "$latest_version"
+      return 0
+    fi
+    warn "无法从官方发布页获取 Snell ${protocol_version} 最新版本，使用内置版本 v${fallback_version}。" >&2
+  fi
+
+  printf "%s" "$fallback_version"
+}
+
+extract_latest_snell_release_version() {
+  local protocol_version="$1"
+  local line release_version
+
+  validate_snell_version "$protocol_version" || return 1
+  while IFS= read -r line; do
+    if [[ "$line" =~ snell-server-v([0-9]+\.[0-9]+\.[0-9]+([[:alpha:]]+[0-9]*)?)-linux-(amd64|i386|aarch64|armv7l)\.zip ]]; then
+      release_version="${BASH_REMATCH[1]}"
+      if [[ "$(snell_protocol_version_from_release "$release_version")" == "$protocol_version" ]]; then
+        printf "%s" "$release_version"
+        return 0
+      fi
+    fi
+  done
+
+  return 1
+}
+
+fetch_latest_snell_release_version() {
+  local protocol_version="$1"
+  local release_notes
+
+  release_notes="$(curl -fsSL --retry 2 --connect-timeout 10 --max-time 20 "$SNELL_RELEASE_NOTES_URL" 2>/dev/null)" || return 1
+  extract_latest_snell_release_version "$protocol_version" <<< "$release_notes"
 }
 
 snell_protocol_version_from_release() {
@@ -197,7 +286,7 @@ installed_snell_release_version() {
 
   if [[ -x "$SNELL_BINARY_PATH" ]]; then
     output="$("$SNELL_BINARY_PATH" -v 2>&1 || true)"
-    if [[ "$output" =~ snell-server[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+(b[0-9]+)?) ]]; then
+    if [[ "$output" =~ snell-server[[:space:]]+v([0-9]+\.[0-9]+\.[0-9]+([[:alpha:]]+[0-9]*)?) ]]; then
       normalize_snell_release_version "${BASH_REMATCH[1]}"
       return 0
     fi
@@ -309,8 +398,11 @@ write_snell_config() {
   local protocol_version="$9"
   local mode="${10:-$SNELL_DEFAULT_MODE}"
   local dns_ip_preference="${11:-$SNELL_DEFAULT_DNS_IP_PREFERENCE}"
+  local egress_interface="${12:-}"
+  local custom_configs
 
   mkdir -p "$(dirname "$config_path")"
+  custom_configs="$(extract_snell_custom_config_lines "$config_path" || true)"
 
   {
     printf "[snell-server]\n"
@@ -326,6 +418,9 @@ write_snell_config() {
         printf "obfs-host = %s\n" "$obfs_host"
       fi
     fi
+    if [[ -n "$egress_interface" ]]; then
+      printf "egress-interface = %s\n" "$egress_interface"
+    fi
     printf "tfo = %s\n" "$tfo"
     printf "dns = %s\n" "$dns"
     if [[ "$protocol_version" != "6" ]]; then
@@ -333,7 +428,52 @@ write_snell_config() {
     fi
   } > "$config_path"
 
+  if [[ -n "$custom_configs" ]]; then
+    {
+      printf "\n# Preserved custom config\n"
+      printf "%s\n" "$custom_configs"
+    } >> "$config_path"
+  fi
+
   chmod 600 "$config_path"
+}
+
+extract_snell_custom_config_lines() {
+  local config_path="$1"
+
+  [[ -f "$config_path" ]] || return 0
+
+  SNELL_CONFIG_PATH_TO_PARSE="$config_path" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ['SNELL_CONFIG_PATH_TO_PARSE'])
+known_keys = {
+    'listen',
+    'ipv6',
+    'psk',
+    'obfs',
+    'obfs-host',
+    'tfo',
+    'dns',
+    'dns-ip-preference',
+    'mode',
+    'version',
+    'egress-interface',
+}
+section = 'snell-server'
+
+for raw_line in path.read_text(encoding='utf-8').splitlines():
+    line = raw_line.strip()
+    if line.startswith('['):
+        section = line[1:-1].strip()
+        continue
+    if section != 'snell-server' or not line or line.startswith('#') or '=' not in line:
+        continue
+    key = line.split('=', 1)[0].strip()
+    if key not in known_keys:
+        print(raw_line.rstrip())
+PY
 }
 
 extract_snell_config_details() {
@@ -379,6 +519,7 @@ emit('dns', data.get('dns', ''))
 emit('version', data.get('version', ''))
 emit('mode', data.get('mode', ''))
 emit('dns_ip_preference', data.get('dns-ip-preference', ''))
+emit('egress_interface', data.get('egress-interface', ''))
 PY
 }
 
@@ -394,13 +535,14 @@ snell_dns_preference_from_ipv6() {
 migrate_snell_config_to_protocol() {
   local config_path="$1"
   local protocol_version="$2"
+  local psk_override="${3:-}"
   local parsed
 
   validate_snell_version "$protocol_version" || return 1
   [[ -f "$config_path" ]] || return 1
   parsed="$(extract_snell_config_details "$config_path")"
 
-  local found port psk obfs obfs_host ipv6 tfo dns mode dns_ip_preference
+  local found port psk obfs obfs_host ipv6 tfo dns mode dns_ip_preference egress_interface
   found="false"
   port=""
   psk=""
@@ -411,6 +553,7 @@ migrate_snell_config_to_protocol() {
   dns="$SNELL_DEFAULT_DNS"
   mode="$SNELL_DEFAULT_MODE"
   dns_ip_preference=""
+  egress_interface=""
 
   while IFS=$'\t' read -r key value; do
     case "$key" in
@@ -424,12 +567,14 @@ migrate_snell_config_to_protocol() {
       dns) dns="${value:-$SNELL_DEFAULT_DNS}" ;;
       mode) mode="${value:-$SNELL_DEFAULT_MODE}" ;;
       dns_ip_preference) dns_ip_preference="$value" ;;
+      egress_interface) egress_interface="$value" ;;
     esac
   done <<< "$parsed"
 
   [[ "$found" == "true" ]] || return 1
   validate_snell_port "$port" || return 1
-  validate_snell_psk "$psk" || return 1
+  [[ -n "$psk_override" ]] && psk="$psk_override"
+  validate_snell_psk "$psk" "$protocol_version" || return 1
   validate_snell_obfs "$obfs" || obfs="$SNELL_DEFAULT_OBFS"
   validate_snell_bool "$ipv6" || ipv6="$SNELL_DEFAULT_IPV6"
   validate_snell_bool "$tfo" || tfo="$SNELL_DEFAULT_TFO"
@@ -441,7 +586,7 @@ migrate_snell_config_to_protocol() {
 
   write_snell_config \
     "$config_path" "$port" "$psk" "$obfs" "$obfs_host" \
-    "$ipv6" "$tfo" "$dns" "$protocol_version" "$mode" "$dns_ip_preference"
+    "$ipv6" "$tfo" "$dns" "$protocol_version" "$mode" "$dns_ip_preference" "$egress_interface"
 }
 
 set_snell_config_protocol_version() {
@@ -579,18 +724,24 @@ prompt_snell_port() {
 
 prompt_snell_psk() {
   local default_value="$1"
+  local protocol_version="${2:-}"
   local value
+  local length_hint="8-128"
+
+  if [[ "$protocol_version" == "6" ]]; then
+    length_hint="16-255"
+  fi
 
   while true; do
     read -r -p "PSK 密钥 [回车自动生成/保持当前]: " value
     value="${value:-$default_value}"
 
-    if validate_snell_psk "$value"; then
+    if validate_snell_psk "$value" "$protocol_version"; then
       printf "%s" "$value"
       return 0
     fi
 
-    warn "PSK 不合法。请使用 8-128 位字母、数字或 _ . @ : = + -。"
+    warn "PSK 不合法。请使用 ${length_hint} 位字母、数字或 _ . @ : = + -。"
   done
 }
 
@@ -732,7 +883,7 @@ show_snell_parameters_for_service() {
 
   parsed="$(extract_snell_config_details "$config_path")"
 
-  local found listen port psk obfs obfs_host ipv6 tfo dns protocol_version mode dns_ip_preference
+  local found listen port psk obfs obfs_host ipv6 tfo dns protocol_version mode dns_ip_preference egress_interface
   found="false"
   listen=""
   port=""
@@ -745,6 +896,7 @@ show_snell_parameters_for_service() {
   protocol_version=""
   mode="$SNELL_DEFAULT_MODE"
   dns_ip_preference=""
+  egress_interface=""
 
   while IFS=$'\t' read -r key value; do
     case "$key" in
@@ -760,6 +912,7 @@ show_snell_parameters_for_service() {
       version) protocol_version="$value" ;;
       mode) mode="${value:-$SNELL_DEFAULT_MODE}" ;;
       dns_ip_preference) dns_ip_preference="$value" ;;
+      egress_interface) egress_interface="$value" ;;
     esac
   done <<< "$parsed"
 
@@ -819,6 +972,9 @@ show_snell_parameters_for_service() {
   fi
   printf "  TFO         : %s\n" "$tfo"
   printf "  DNS         : %s\n" "$dns"
+  if [[ -n "$egress_interface" ]]; then
+    printf "  出口网卡    : %s\n" "$egress_interface"
+  fi
   printf "  配置文件    : %s\n" "$config_path"
 
   printf "\nSurge 配置：\n"
@@ -841,7 +997,7 @@ snell_wizard_flow() {
   config_path="$(snell_config_path_for_service "$SNELL_SERVICE_NAME")"
   config_path="${config_path:-$SNELL_CONFIG_PATH}"
 
-  local existing_found existing_port existing_psk existing_obfs existing_obfs_host existing_ipv6 existing_tfo existing_dns existing_version existing_mode existing_dns_ip_preference
+  local existing_found existing_port existing_psk existing_obfs existing_obfs_host existing_ipv6 existing_tfo existing_dns existing_version existing_mode existing_dns_ip_preference existing_egress_interface
   existing_found="false"
   existing_port=""
   existing_psk=""
@@ -853,6 +1009,7 @@ snell_wizard_flow() {
   existing_version=""
   existing_mode="$SNELL_DEFAULT_MODE"
   existing_dns_ip_preference=""
+  existing_egress_interface=""
 
   if [[ -f "$config_path" ]]; then
     existing_parsed="$(snell_load_existing_details "$config_path")"
@@ -869,6 +1026,7 @@ snell_wizard_flow() {
         version) existing_version="$value" ;;
         mode) existing_mode="${value:-$SNELL_DEFAULT_MODE}" ;;
         dns_ip_preference) existing_dns_ip_preference="$value" ;;
+        egress_interface) existing_egress_interface="$value" ;;
       esac
     done <<< "$existing_parsed"
   fi
@@ -901,10 +1059,10 @@ snell_wizard_flow() {
   release_version="$(snell_release_version_for_protocol "$protocol_version")"
   port="$(prompt_snell_port "$default_port")"
 
-  if ! validate_snell_psk "$existing_psk"; then
+  if ! validate_snell_psk "$existing_psk" "$protocol_version"; then
     existing_psk="$(generate_snell_psk)"
   fi
-  psk="$(prompt_snell_psk "$existing_psk")"
+  psk="$(prompt_snell_psk "$existing_psk" "$protocol_version")"
 
   obfs="$SNELL_DEFAULT_OBFS"
   obfs_host=""
@@ -964,7 +1122,8 @@ snell_wizard_flow() {
     ok "已创建 Snell 服务备份: ${service_backup_path}"
   fi
 
-  write_snell_config "$config_path" "$port" "$psk" "$obfs" "$obfs_host" "$ipv6" "$tfo" "$dns" "$protocol_version" "$mode" "$dns_ip_preference"
+  write_snell_config "$config_path" "$port" "$psk" "$obfs" "$obfs_host" "$ipv6" "$tfo" "$dns" "$protocol_version" "$mode" "$dns_ip_preference" "$existing_egress_interface"
+  apply_snell_tfo_kernel_setting "$tfo"
   ok "已写入 Snell 配置: ${config_path}"
 
   write_snell_service_file "$SNELL_SERVICE_NAME" "$config_path"
@@ -1016,7 +1175,7 @@ install_snell_protocol_version() {
   local protocol_version="$1"
   local force_download="${2:-false}"
   local config_path release_version config_backup version_backup version_file_existed binary_file_existed
-  local binary_changed service_was_active
+  local binary_changed service_was_active migration_psk parsed existing_psk tfo_value
 
   validate_snell_version "$protocol_version" || die "不支持的 Snell 协议版本: ${protocol_version}"
   release_version="$(snell_release_version_for_protocol "$protocol_version")"
@@ -1030,6 +1189,9 @@ install_snell_protocol_version() {
   [[ -f "$SNELL_BINARY_PATH" ]] && binary_file_existed="true"
   binary_changed="false"
   service_was_active="false"
+  migration_psk=""
+  existing_psk=""
+  tfo_value="$SNELL_DEFAULT_TFO"
   SNELL_LAST_BINARY_BACKUP=""
 
   if snell_service_exists "$SNELL_SERVICE_NAME" && is_service_active "$SNELL_SERVICE_NAME"; then
@@ -1044,11 +1206,31 @@ install_snell_protocol_version() {
   fi
 
   if [[ -f "$config_path" ]]; then
-    if ! migrate_snell_config_to_protocol "$config_path" "$protocol_version"; then
+    parsed="$(extract_snell_config_details "$config_path")"
+    while IFS=$'\t' read -r key value; do
+      case "$key" in
+        psk) existing_psk="$value" ;;
+        tfo) tfo_value="${value:-$SNELL_DEFAULT_TFO}" ;;
+      esac
+    done <<< "$parsed"
+
+    if ! validate_snell_psk "$existing_psk" "$protocol_version"; then
+      if [[ "$protocol_version" == "6" ]]; then
+        warn "现有 PSK 不符合 Snell 6 的 16-255 位要求，将提示输入新 PSK。"
+        migration_psk="$(prompt_snell_psk "$(generate_snell_psk)" "$protocol_version")"
+      fi
+    fi
+
+    if ! migrate_snell_config_to_protocol "$config_path" "$protocol_version" "$migration_psk"; then
       restore_snell_upgrade "$config_path" "$config_backup" "$version_backup" "$version_file_existed" "$SNELL_LAST_BINARY_BACKUP" "$binary_file_existed"
       die "Snell 配置迁移失败，已恢复升级前状态。"
     fi
-    ok "已迁移 Snell 配置到协议版本 ${protocol_version}，端口与 PSK 保持不变。"
+    if [[ -n "$migration_psk" ]]; then
+      ok "已迁移 Snell 配置到协议版本 ${protocol_version}，端口保持不变，PSK 已按协议要求更新。"
+    else
+      ok "已迁移 Snell 配置到协议版本 ${protocol_version}，端口与 PSK 保持不变。"
+    fi
+    apply_snell_tfo_kernel_setting "$tfo_value"
   fi
 
   if [[ "$service_was_active" == "true" ]]; then
@@ -1063,8 +1245,8 @@ install_snell_protocol_version() {
   fi
 
   ok "Snell Server 已切换到 v${release_version}（协议版本 ${protocol_version}）。"
-  if [[ "$protocol_version" == "6" ]]; then
-    info "Snell 6 当前为 Beta；Surge 客户端需使用 version=6，并与服务端保持相同 mode。"
+  if [[ "$protocol_version" == "6" && "$release_version" =~ [[:alpha:]] ]]; then
+    info "Snell 6 当前为预发布版本；Surge 客户端需使用 version=6，并与服务端保持相同 mode。"
   fi
 }
 
@@ -1072,7 +1254,7 @@ upgrade_snell_to_v6_flow() {
   local release_version
   release_version="$(snell_release_version_for_protocol 6)"
 
-  warn "Snell 6 当前为 Beta。升级会保留现有监听端口、PSK、DNS 和 TFO，并迁移 v4/v5 配置。"
+  warn "升级会保留现有监听端口、PSK、DNS 和 TFO，并迁移 v4/v5 配置。"
   if ! prompt_yes_no "确认升级到 Snell v${release_version}？" "y"; then
     return 0
   fi
