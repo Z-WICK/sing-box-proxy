@@ -39,6 +39,13 @@ SOCKS5_LEGACY_METADATA_DIR="${DATA_DIR}/socks5-meta"
 SNELL_SERVICE_NAME="snell-server.service"
 SNELL_BINARY_PATH="/usr/local/bin/snell-server"
 SNELL_CONFIG_PATH="/etc/snell/config.conf"
+TRUSTTUNNEL_SERVICE_NAME="trusttunnel.service"
+TRUSTTUNNEL_INSTALL_DIR="/opt/trusttunnel"
+TRUSTTUNNEL_ENDPOINT_BINARY="${TRUSTTUNNEL_INSTALL_DIR}/trusttunnel_endpoint"
+TRUSTTUNNEL_STANDARD_LISTEN_ADDR="0.0.0.0"
+TRUSTTUNNEL_STANDARD_LISTEN_PORT="443"
+TRUSTTUNNEL_FALLBACK_LISTEN_PORT="8443"
+TRUSTTUNNEL_METADATA_DIR="/etc/trusttunnel-meta"
 CLIENT_IMPORT_DIR="${DATA_DIR}/client-import"
 CLIENT_IMPORT_PUBLISH_DIR="${DATA_DIR}/client-import-publish"
 CLIENT_IMPORT_HTTP_SERVICE="sing-box-import-http.service"
@@ -60,6 +67,7 @@ ANYTLS_MODULE_LOADED="false"
 VLESS_REALITY_MODULE_LOADED="false"
 SOCKS5_MODULE_LOADED="false"
 SNELL_MODULE_LOADED="false"
+TRUSTTUNNEL_MODULE_LOADED="false"
 PROTOCOL_GROUP_LABELS=()
 PROTOCOL_ITEM_GROUPS=()
 PROTOCOL_ITEM_LABELS=()
@@ -147,6 +155,7 @@ load_protocol_modules() {
   load_protocol_module "vless_reality.sh" "VLESS_REALITY_MODULE_LOADED" "register_vless_reality_menu_items" "VLESS Reality" || true
   load_protocol_module "socks5.sh" "SOCKS5_MODULE_LOADED" "register_socks5_menu_items" "SOCKS5" || true
   load_protocol_module "snell.sh" "SNELL_MODULE_LOADED" "register_snell_menu_items" "Snell" || true
+  load_protocol_module "trusttunnel.sh" "TRUSTTUNNEL_MODULE_LOADED" "register_trusttunnel_menu_items" "TrustTunnel" || true
 }
 
 require_root() {
@@ -1197,6 +1206,18 @@ show_status() {
       "$(systemctl is-enabled "$SNELL_SERVICE_NAME" 2>/dev/null || true)" \
       "$SNELL_BINARY_PATH" \
       "$SNELL_CONFIG_PATH"
+  else
+    printf "  （无）\n"
+  fi
+
+  printf "\nTrustTunnel Endpoint：\n"
+  if declare -F trusttunnel_service_exists >/dev/null 2>&1 && trusttunnel_service_exists "$TRUSTTUNNEL_SERVICE_NAME"; then
+    printf "  - %s | active=%s | enabled=%s | binary=%s | config=%s\n" \
+      "$TRUSTTUNNEL_SERVICE_NAME" \
+      "$(systemctl is-active "$TRUSTTUNNEL_SERVICE_NAME" 2>/dev/null || true)" \
+      "$(systemctl is-enabled "$TRUSTTUNNEL_SERVICE_NAME" 2>/dev/null || true)" \
+      "$TRUSTTUNNEL_ENDPOINT_BINARY" \
+      "${TRUSTTUNNEL_INSTALL_DIR}/vpn.toml"
   else
     printf "  （无）\n"
   fi
