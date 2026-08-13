@@ -104,17 +104,19 @@ fi
 
 assert_eq "4.1.1" "$(snell_release_version_for_protocol 4)" "Snell v4 release mapping"
 assert_eq "5.0.1" "$(snell_release_version_for_protocol 5)" "Snell v5 release mapping"
-assert_eq "6.0.0rc" "$(snell_release_version_for_protocol 6)" "Snell v6 release mapping"
-assert_eq "https://dl.nssurge.com/snell/snell-server-v6.0.0rc-linux-amd64.zip" "$(snell_download_url "6.0.0rc" "amd64")" "Snell v6 download URL"
-validate_snell_arch_for_release "6.0.0rc" "aarch64" || fail "Snell v6 aarch64 rejected"
-if validate_snell_arch_for_release "6.0.0rc" "armv7l"; then
+assert_eq "6.0.0rc2" "$(snell_release_version_for_protocol 6)" "Snell v6 release mapping"
+assert_eq "https://dl.nssurge.com/snell/snell-server-v6.0.0rc2-linux-amd64.zip" "$(snell_download_url "6.0.0rc2" "amd64")" "Snell v6 download URL"
+validate_snell_arch_for_release "6.0.0rc2" "aarch64" || fail "Snell v6 aarch64 rejected"
+if validate_snell_arch_for_release "6.0.0rc2" "armv7l"; then
   fail "Snell v6 armv7l accepted"
 fi
 
 release_notes_fixture="$(printf '%s\n' \
+  'https://dl.nssurge.com/snell/snell-server-v6.0.0b4-linux-amd64.zip' \
   'https://dl.nssurge.com/snell/snell-server-v6.0.0rc-linux-amd64.zip' \
+  'https://dl.nssurge.com/snell/snell-server-v6.0.0rc2-linux-amd64.zip' \
   'https://dl.nssurge.com/snell/snell-server-v5.0.1-linux-amd64.zip')"
-assert_eq "6.0.0rc" "$(extract_latest_snell_release_version 6 <<< "$release_notes_fixture")" "extract latest Snell v6 release"
+assert_eq "6.0.0rc2" "$(extract_latest_snell_release_version 6 <<< "$release_notes_fixture")" "extract latest Snell v6 release"
 assert_eq "5.0.1" "$(extract_latest_snell_release_version 5 <<< "$release_notes_fixture")" "extract latest Snell v5 release"
 
 prompted_obfs="$(prompt_snell_obfs "off" 2>/dev/null <<< "")"
@@ -124,8 +126,8 @@ mkdir -p "$(dirname "$SNELL_BINARY_PATH")"
 printf '#!/usr/bin/env sh\nprintf "snell-server v5.0.1 (test)\\n"\n' > "$SNELL_BINARY_PATH"
 chmod +x "$SNELL_BINARY_PATH"
 assert_eq "5.0.1" "$(installed_snell_release_version)" "detect release from binary"
-printf '#!/usr/bin/env sh\nprintf "snell-server v6.0.0rc (test)\\n"\n' > "$SNELL_BINARY_PATH"
-assert_eq "6.0.0rc" "$(installed_snell_release_version)" "detect RC release from binary"
+printf '#!/usr/bin/env sh\nprintf "snell-server v6.0.0rc2 (test)\\n"\n' > "$SNELL_BINARY_PATH"
+assert_eq "6.0.0rc2" "$(installed_snell_release_version)" "detect RC2 release from binary"
 
 write_snell_config "$SNELL_CONFIG_PATH" "2345" "abcDEF1234567890" "off" "" "false" "true" "1.1.1.1, 8.8.8.8" "5"
 printf "egress-interface = eth0\ncustom-option = keep-me\n" >> "$SNELL_CONFIG_PATH"

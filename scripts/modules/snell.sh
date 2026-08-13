@@ -8,7 +8,7 @@
 : "${SNELL_VERSION_FILE:=${SNELL_CONFIG_DIR}/ver.txt}"
 : "${SNELL_V4_RELEASE_VERSION:=4.1.1}"
 : "${SNELL_V5_RELEASE_VERSION:=5.0.1}"
-: "${SNELL_V6_RELEASE_VERSION:=6.0.0rc}"
+: "${SNELL_V6_RELEASE_VERSION:=6.0.0rc2}"
 : "${SNELL_RELEASE_NOTES_URL:=https://kb.nssurge.com/surge-knowledge-base/release-notes/snell.md}"
 : "${SNELL_FETCH_LATEST_RELEASES:=true}"
 : "${SNELL_DEFAULT_PROTOCOL_VERSION:=6}"
@@ -216,20 +216,57 @@ snell_release_version_for_protocol() {
 
 extract_latest_snell_release_version() {
   local protocol_version="$1"
-  local line release_version
 
   validate_snell_version "$protocol_version" || return 1
-  while IFS= read -r line; do
-    if [[ "$line" =~ snell-server-v([0-9]+\.[0-9]+\.[0-9]+([[:alpha:]]+[0-9]*)?)-linux-(amd64|i386|aarch64|armv7l)\.zip ]]; then
-      release_version="${BASH_REMATCH[1]}"
-      if [[ "$(snell_protocol_version_from_release "$release_version")" == "$protocol_version" ]]; then
-        printf "%s" "$release_version"
-        return 0
-      fi
-    fi
-  done
 
-  return 1
+  SNELL_PROTOCOL_VERSION="$protocol_version" python3 -c '
+import os
+import re
+import sys
+
+protocol_version = os.environ["SNELL_PROTOCOL_VERSION"]
+pattern = re.compile(
+    r"snell-server-v(\d+\.\d+\.\d+(?:[A-Za-z]+\d*)?)-linux-"
+    r"(?:amd64|i386|aarch64|armv7l)\.zip"
+)
+
+def version_key(value):
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)([A-Za-z]+)?(\d*)", value)
+    if not match:
+        return None
+
+    major, minor, patch, suffix, suffix_number = match.groups()
+    suffix = (suffix or "").lower()
+    suffix_rank = {
+        "a": 1,
+        "alpha": 1,
+        "b": 2,
+        "beta": 2,
+        "rc": 3,
+        "": 4,
+    }.get(suffix, 0)
+    return (
+        int(major),
+        int(minor),
+        int(patch),
+        suffix_rank,
+        suffix,
+        int(suffix_number or 0),
+    )
+
+versions = set()
+for line in sys.stdin:
+    versions.update(pattern.findall(line))
+
+protocol_versions = [
+    value for value in versions
+    if value.split(".", 1)[0] == protocol_version and version_key(value) is not None
+]
+if protocol_versions:
+    print(max(protocol_versions, key=version_key), end="")
+else:
+    raise SystemExit(1)
+'
 }
 
 fetch_latest_snell_release_version() {

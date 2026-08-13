@@ -32,7 +32,7 @@ VLESS Reality 默认启用防偷跑模式。脚本会把 Reality fallback 接到
 
 SOCKS5 会默认创建独立的 `sing-box-socks5.service`，监听 `0.0.0.0:1080`，如果端口被占用会改用 `1081`。脚本会生成用户名和密码，不创建匿名公开代理。
 
-Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前支持 Snell v4/v5 和 v6，默认新装 v6；安装或更新时会从 Surge 官方发布页自动解析所选协议的最新构建，获取失败时回退到脚本内置版本（当前 v6 回退版本为 `v6.0.0rc`）。配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。Snell 菜单提供 v4/v5 到 v6 的保配置升级，迁移时保留监听端口、PSK、DNS、TFO、`egress-interface` 和未知配置项，失败会回滚二进制和配置。Snell v6 的 PSK 必须为 16-255 位；启用 TFO 时仅设置 `net.ipv4.tcp_fastopen`，不修改全局 BBR 或其他网络参数。v6 官方仅提供 `amd64`、`i386`、`aarch64` 构建，不支持 `armv7l`。
+Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前支持 Snell v4/v5 和 v6，默认新装 v6；安装或更新时会从 Surge 官方发布页解析所选协议的全部构建并选择最高版本，获取失败时回退到脚本内置版本（当前 v6 回退版本为 `v6.0.0rc2`）。配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。Snell 菜单提供 v4/v5 到 v6 的保配置升级，迁移时保留监听端口、PSK、DNS、TFO、`egress-interface` 和未知配置项，失败会回滚二进制和配置。Snell v6 的 PSK 必须为 16-255 位；启用 TFO 时仅设置 `net.ipv4.tcp_fastopen`，不修改全局 BBR 或其他网络参数。v6 官方仅提供 `amd64`、`i386`、`aarch64` 构建，不支持 `armv7l`。
 
 TrustTunnel 会使用官方 endpoint 安装脚本下载独立的 `trusttunnel_endpoint`，默认安装到 `/opt/trusttunnel` 并创建 `trusttunnel.service`。配置向导会生成 `vpn.toml`、`hosts.toml`、`credentials.toml` 和 `rules.toml`，默认启用 HTTP/1.1 + HTTP/2；客户端连接地址可以是公网 IP，但 TLS 主机名/SNI 必须是域名；可使用自签证书或已有 PEM 证书。查看参数时会调用 endpoint 原生导出 `tt://?` 深链和 TOML 客户端配置，并按 HAProxy 前端端口展示公网端口；也可以通过 `TRUSTTUNNEL_PUBLIC_LISTEN_PORT` 显式指定公网端口。官方安装来源为 `https://raw.githubusercontent.com/TrustTunnel/TrustTunnel/refs/heads/master/scripts/install.sh`。
 
