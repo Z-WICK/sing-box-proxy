@@ -42,6 +42,41 @@ AnyTLS、VLESS Reality、SOCKS5 和 Snell 都已拆分为独立模块（`scripts
 
 当前菜单结构是一级主菜单 + 二级 `Proxy` 菜单 + 三级协议菜单。协议相关功能都收进 `Proxy` 子菜单里，后续新增协议时不会继续挤占主菜单。
 
+## 图形控制台（多服务器管理）
+
+`gui/` 是一个在本机运行的图形控制台，通过 SSH 同时管理多台服务器：
+
+```bash
+cd gui
+npm install
+npm run app        # 构建前端并启动，macOS 会自动在浏览器中打开
+```
+
+启动后终端会打印 `http://127.0.0.1:8787/#token=…`，必须用这个带令牌的链接打开。
+
+- **服务器清单**：保存在 `~/.config/sing-box-proxy-gui/servers.json`（权限 0600），只记录主机、端口、用户和私钥路径，不保存密码。
+- **添加服务器**：默认从 `~/.ssh/config`（含 `Include`）读取 Host 别名，可勾选多台批量添加；只保存别名，HostName、User、端口、`IdentityAgent` 仍由 ssh 配置决定。也可以手动填写。
+- **1Password**：配置了 1Password SSH Agent（`IdentityAgent` 或 `SSH_AUTH_SOCK`）时直接可用，连接时由 1Password 弹窗授权（Touch ID）。SSH 连接复用 10 分钟以减少弹窗，状态刷新最多 3 台并发。需要指定某把密钥时，填写 1Password 导出的 `.pub` 公钥路径。
+- **连接方式**：调用本机 `ssh`，沿用 `~/.ssh/config` 和 ssh-agent；只支持密钥登录。可以用 root 登录，也可以用配置了免密 sudo（NOPASSWD）的普通用户。第一次连接时会自动信任主机指纹（`StrictHostKeyChecking=accept-new`），之后指纹变化会被拒绝。
+- **脚本同步**：每次操作前会比对哈希，把本地 `scripts/` 和 `tools/` 推送到服务器的 `/root/sing-box-proxy`（同步的是本地工作区的当前内容，包括未提交的改动）。
+- **功能**：概览所有服务器的连通性、sing-box 版本和服务状态；查看各协议参数/客户端链接；查看日志；启动/停止/重启服务；在网页终端里运行完整的交互菜单（安装、配置向导、升级、卸载）或打开 root shell。
+- **安全**：只监听 `127.0.0.1`，校验 Host 头和 WebSocket Origin，所有接口都需要每次启动时随机生成的令牌。服务器上不会开放新端口，也没有常驻 agent。
+- **环境变量**：`SBP_GUI_PORT`（端口）、`SBP_GUI_CONFIG_DIR`（清单目录）、`SBP_GUI_SSH_CONFIG`（使用独立 ssh 配置文件，等同 `ssh -F`）、`SBP_GUI_TOKEN`（固定令牌）。
+- **已知限制**：终端连接建立后，窗口尺寸变化不会同步到远端，调整窗口后需要重新连接。
+
+开发模式：`npm run dev:server` 与 `npm run dev:web` 分别启动后端和 Vite，然后打开 `http://127.0.0.1:5173/#token=<后端打印的令牌>`。测试：`npm test`。
+
+控制台依赖主脚本的非交互模式，也可以直接在服务器上调用：
+
+```bash
+sudo ./scripts/sing-box-proxy-manager.sh --agent status                 # JSON 状态
+sudo ./scripts/sing-box-proxy-manager.sh --agent params socks5          # 协议参数
+sudo ./scripts/sing-box-proxy-manager.sh --agent service sing-box-socks5.service restart
+sudo ./scripts/sing-box-proxy-manager.sh --agent logs snell-server.service 100
+```
+
+`service` / `logs` 只接受本脚本管理的服务（`sing-box*.service`、Snell、TrustTunnel、导入链接服务）。
+
 ## 目录
 
 - `sing-box-proxy-manager.sh`：兼容旧习惯的入口脚本，实际实现位于 `scripts/`
@@ -51,6 +86,7 @@ AnyTLS、VLESS Reality、SOCKS5 和 Snell 都已拆分为独立模块（`scripts
 - `scripts/modules/socks5.sh`：SOCKS5 模块
 - `scripts/modules/snell.sh`：Snell Server 模块，管理 Surge 官方 `snell-server`
 - `scripts/modules/trusttunnel.sh`：TrustTunnel endpoint 模块
+- `gui/`：本地图形控制台（Node + React），通过 SSH 管理多台服务器
 - `tools/`：辅助脚本，例如导入配置的 HTTP 服务
 - `docs/reference/`：整理后的上游参考文档
 - `data/`：运行时生成的元数据和客户端导入文件，仅远端会使用

@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 .DS_Store
+gui/node_modules/
+gui/dist/

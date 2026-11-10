@@ -1427,10 +1427,249 @@ main_menu() {
   done
 }
 
+# ---------------------------------------------------------------------------
+# 非交互 agent 模式：供本地图形控制台通过 SSH 调用。
+# 所有子命令都不会读取 stdin；结构化结果写 stdout，日志写 stderr。
+# ---------------------------------------------------------------------------
+
+agent_json_string() {
+  local value="$1"
+  local out="" ch code i
+  for (( i = 0; i < ${#value}; i++ )); do
+    ch="${value:i:1}"
+    case "$ch" in
+      '"') out+='\"' ;;
+      '\') out+='\\' ;;
+      $'\n') out+='\n' ;;
+      $'\r') out+='\r' ;;
+      $'\t') out+='\t' ;;
+      *)
+        printf -v code '%d' "'$ch" 2>/dev/null || code=32
+        if (( code >= 0 && code < 32 )); then
+          printf -v ch '\\u%04x' "$code"
+        fi
+        out+="$ch"
+        ;;
+    esac
+  done
+  printf '"%s"' "$out"
+}
+
+agent_protocol_for_singbox_service() {
+  local service_name="$1"
+  local config_path
+  config_path="$(extract_config_path_from_service "$service_name")"
+
+  if [[ -n "$config_path" && -f "$config_path" ]]; then
+    if [[ "$VLESS_REALITY_MODULE_LOADED" == "true" ]] && config_has_vless_reality_inbound "$config_path" 2>/dev/null; then
+      printf "vless_reality"
+      return 0
+    fi
+    if [[ "$SOCKS5_MODULE_LOADED" == "true" ]] && config_has_socks5_inbound "$config_path" 2>/dev/null; then
+      printf "socks5"
+      return 0
+    fi
+    if [[ "$ANYTLS_MODULE_LOADED" == "true" ]] && config_has_anytls_inbound "$config_path" 2>/dev/null; then
+      printf "anytls"
+      return 0
+    fi
+  fi
+
+  case "$service_name" in
+    "$VLESS_REALITY_STANDARD_SERVICE_NAME") printf "vless_reality" ;;
+    "$SOCKS5_STANDARD_SERVICE_NAME") printf "socks5" ;;
+    "$ANYTLS_STANDARD_SERVICE_NAME") printf "anytls" ;;
+    *) printf "sing-box" ;;
+  esac
+}
+
+agent_managed_units() {
+  list_service_candidates
+  if systemctl cat "$SNELL_SERVICE_NAME" >/dev/null 2>&1; then
+    printf "%s\n" "$SNELL_SERVICE_NAME"
+  fi
+  if systemctl cat "$TRUSTTUNNEL_SERVICE_NAME" >/dev/null 2>&1; then
+    printf "%s\n" "$TRUSTTUNNEL_SERVICE_NAME"
+  fi
+  if systemctl cat "$CLIENT_IMPORT_HTTP_SERVICE" >/dev/null 2>&1; then
+    printf "%s\n" "$CLIENT_IMPORT_HTTP_SERVICE"
+  fi
+}
+
+agent_require_managed_unit() {
+  local unit="$1"
+  local managed
+  validate_service_name "$unit" || die "服务名不合法: ${unit}"
+  managed="$(agent_managed_units)"
+  if ! grep -qxF -- "$unit" <<< "$managed"; then
+    die "不是本脚本管理的服务: ${unit}"
+  fi
+}
+
+agent_status() {
+  local version os_name unit protocol config_path first
+  version="$(current_version)"
+  os_name=""
+  if [[ -r /etc/os-release ]]; then
+    os_name="$(. /etc/os-release && printf "%s" "${PRETTY_NAME:-${NAME:-}}")"
+  fi
+
+  printf '{'
+  printf '"hostname":%s,' "$(agent_json_string "$(hostname 2>/dev/null || true)")"
+  printf '"server_identity":%s,' "$(agent_json_string "$(default_server_identity)")"
+  printf '"arch":%s,' "$(agent_json_string "$(uname -m)")"
+  printf '"os":%s,' "$(agent_json_string "$os_name")"
+  printf '"script_version":%s,' "$(agent_json_string "$SCRIPT_VERSION")"
+  printf '"singbox":{"installed":%s,"version":%s,"binary":%s},' \
+    "$([[ -n "$version" ]] && printf true || printf false)" \
+    "$(agent_json_string "$version")" \
+    "$(agent_json_string "$BINARY_PATH")"
+  printf '"modules":{"anytls":%s,"vless_reality":%s,"socks5":%s,"snell":%s,"trusttunnel":%s},' \
+    "$ANYTLS_MODULE_LOADED" "$VLESS_REALITY_MODULE_LOADED" "$SOCKS5_MODULE_LOADED" "$SNELL_MODULE_LOADED" "$TRUSTTUNNEL_MODULE_LOADED"
+
+  printf '"services":['
+  first="true"
+  while IFS= read -r unit; do
+    [[ -z "$unit" ]] && continue
+    case "$unit" in
+      "$SNELL_SERVICE_NAME")
+        protocol="snell"
+        config_path="$SNELL_CONFIG_PATH"
+        ;;
+      "$TRUSTTUNNEL_SERVICE_NAME")
+        protocol="trusttunnel"
+        config_path="${TRUSTTUNNEL_INSTALL_DIR}/vpn.toml"
+        ;;
+      "$CLIENT_IMPORT_HTTP_SERVICE")
+        protocol="import-http"
+        config_path=""
+        ;;
+      *)
+        protocol="$(agent_protocol_for_singbox_service "$unit")"
+        config_path="$(extract_config_path_from_service "$unit")"
+        ;;
+    esac
+
+    [[ "$first" == "true" ]] || printf ','
+    first="false"
+    printf '{"unit":%s,"protocol":%s,"active":%s,"enabled":%s,"config":%s}' \
+      "$(agent_json_string "$unit")" \
+      "$(agent_json_string "$protocol")" \
+      "$(agent_json_string "$(systemctl is-active "$unit" 2>/dev/null || true)")" \
+      "$(agent_json_string "$(systemctl is-enabled "$unit" 2>/dev/null || true)")" \
+      "$(agent_json_string "$config_path")"
+  done < <(agent_managed_units)
+  printf ']}\n'
+}
+
+agent_params() {
+  local protocol="${1:-}"
+  local unit="${2:-}"
+
+  case "$protocol" in
+    anytls)
+      [[ "$ANYTLS_MODULE_LOADED" == "true" ]] || die "AnyTLS 模块未加载。"
+      unit="${unit:-$(pick_default_service)}"
+      agent_require_managed_unit "$unit"
+      show_anytls_parameters_for_service "$unit"
+      ;;
+    vless_reality)
+      [[ "$VLESS_REALITY_MODULE_LOADED" == "true" ]] || die "VLESS Reality 模块未加载。"
+      unit="${unit:-$VLESS_REALITY_STANDARD_SERVICE_NAME}"
+      agent_require_managed_unit "$unit"
+      show_vless_reality_parameters_for_service "$unit"
+      ;;
+    socks5)
+      [[ "$SOCKS5_MODULE_LOADED" == "true" ]] || die "SOCKS5 模块未加载。"
+      unit="${unit:-$SOCKS5_STANDARD_SERVICE_NAME}"
+      agent_require_managed_unit "$unit"
+      show_socks5_parameters_for_service "$unit"
+      ;;
+    snell)
+      [[ "$SNELL_MODULE_LOADED" == "true" ]] || die "Snell 模块未加载。"
+      show_snell_parameters_for_service "$SNELL_SERVICE_NAME"
+      ;;
+    trusttunnel)
+      [[ "$TRUSTTUNNEL_MODULE_LOADED" == "true" ]] || die "TrustTunnel 模块未加载。"
+      show_trusttunnel_parameters_for_service "$TRUSTTUNNEL_SERVICE_NAME"
+      ;;
+    *)
+      die "未知协议: ${protocol}"
+      ;;
+  esac
+}
+
+agent_service() {
+  local unit="${1:-}"
+  local action="${2:-}"
+
+  agent_require_managed_unit "$unit"
+  case "$action" in
+    start|stop|restart|enable|disable)
+      systemctl "$action" "$unit"
+      ok "${unit}: ${action} 完成"
+      ;;
+    *)
+      die "不支持的服务操作: ${action}"
+      ;;
+  esac
+}
+
+agent_logs() {
+  local unit="${1:-}"
+  local lines="${2:-200}"
+
+  agent_require_managed_unit "$unit"
+  [[ "$lines" =~ ^[0-9]+$ ]] && (( lines >= 1 && lines <= 5000 )) || die "行数不合法: ${lines}"
+  journalctl -u "$unit" -n "$lines" --no-pager 2>&1 || true
+}
+
+agent_usage() {
+  cat <<'USAGE'
+用法: sing-box-proxy-manager.sh --agent <command> [args]
+
+  status                       输出服务器与服务状态 (JSON)
+  params <protocol> [unit]     输出协议参数 (anytls|vless_reality|socks5|snell|trusttunnel)
+  service <unit> <action>      start|stop|restart|enable|disable
+  logs <unit> [lines]          输出 journalctl 日志
+  menu                         进入交互菜单（用于图形控制台的终端）
+USAGE
+}
+
+agent_main() {
+  local command="${1:-}"
+  shift || true
+
+  if [[ "$command" != "menu" ]]; then
+    COLOR_RESET=''
+    COLOR_RED=''
+    COLOR_GREEN=''
+    COLOR_YELLOW=''
+    COLOR_BLUE=''
+  fi
+
+  case "$command" in
+    status) agent_status ;;
+    params) agent_params "$@" ;;
+    service) agent_service "$@" ;;
+    logs) agent_logs "$@" ;;
+    menu) main_menu ;;
+    ""|help|-h|--help) agent_usage ;;
+    *) agent_usage >&2; die "未知 agent 命令: ${command}" ;;
+  esac
+}
+
 main() {
   require_root
   require_commands
   load_protocol_modules
+
+  if [[ "${1:-}" == "--agent" ]]; then
+    shift
+    agent_main "$@"
+    return
+  fi
+
   main_menu
 }
 
