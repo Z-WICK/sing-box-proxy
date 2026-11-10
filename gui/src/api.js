@@ -63,6 +63,51 @@ export const api = {
     request('GET', `/api/servers/${id}/logs?unit=${encodeURIComponent(unit)}&lines=${lines}`),
 };
 
+const EXIT_MARK = '\u0000SBP_EXIT:';
+
+/**
+ * 执行远端操作并实时回调输出。返回退出码（0 表示成功）。
+ * 服务端在输出末尾追加 `\0SBP_EXIT:<code>` 作为结束标记。
+ */
+export async function runAction(serverId, action, answers, onText) {
+  const res = await fetch(`/api/servers/${serverId}/run`, {
+    method: 'POST',
+    headers: { 'x-sbp-token': token, 'content-type': 'application/json' },
+    body: JSON.stringify({ action, answers }),
+  });
+  if (!res.ok) {
+    let message = `请求失败 (${res.status})`;
+    try {
+      message = (await res.json()).error || message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  let exitCode = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const markAt = pending.indexOf(EXIT_MARK);
+    if (markAt !== -1) {
+      onText(pending.slice(0, markAt));
+      exitCode = Number.parseInt(pending.slice(markAt + EXIT_MARK.length), 10);
+      pending = '';
+    } else if (pending.length > EXIT_MARK.length) {
+      // 保留末尾一小段，避免结束标记被拆在两个分片之间。
+      const cut = pending.length - EXIT_MARK.length;
+      onText(pending.slice(0, cut));
+      pending = pending.slice(cut);
+    }
+    if (done) break;
+  }
+  if (pending) onText(pending);
+  return Number.isNaN(exitCode) || exitCode === null ? -1 : exitCode;
+}
+
 export function terminalUrl(serverId, mode, cols, rows) {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const params = new URLSearchParams({ server: serverId, mode, cols: String(cols), rows: String(rows), token });

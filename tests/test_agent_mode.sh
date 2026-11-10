@@ -90,4 +90,62 @@ if ( agent_main bogus ) 2>/dev/null; then
   fail "unknown agent command accepted"
 fi
 
+# ---------------------------------------------------------------------------
+# 非交互答案机制
+# ---------------------------------------------------------------------------
+# shellcheck source=/dev/null
+source "${ROOT_DIR}/scripts/modules/snell.sh"
+unset -f systemctl hostname
+is_listen_port_occupied() { return 1; }
+
+SBP_NONINTERACTIVE="true"
+
+SBP_ANSWERS=([snell_port]="40123")
+assert_eq "40123" "$(prompt_snell_port 2345 2>/dev/null)" "answered text prompt"
+
+SBP_ANSWERS=()
+assert_eq "2345" "$(prompt_snell_port 2345 2>/dev/null)" "empty answer falls back to default"
+
+SBP_ANSWERS=([snell_port]="not-a-port")
+if err="$( (prompt_snell_port 2345) 2>&1 >/dev/null )"; then
+  fail "invalid answer should abort instead of looping"
+fi
+[[ "$err" == *"snell_port"* ]] || fail "invalid answer error should name the key: ${err}"
+
+SBP_ANSWERS=([snell_psk]="short")
+if err="$( (prompt_snell_psk "" 6) 2>&1 >/dev/null )"; then
+  fail "invalid psk should abort"
+fi
+[[ "$err" != *"short"* ]] || fail "secret values must not be echoed in errors"
+
+SBP_ANSWERS=([snell_mode]="unshaped")
+assert_eq "unshaped" "$(prompt_snell_mode default 2>/dev/null)" "menu prompt accepts named answer"
+
+SBP_ANSWERS=([confirm]="n")
+if prompt_yes_no "继续？" "y" confirm 2>/dev/null; then fail "answered n should return false"; fi
+SBP_ANSWERS=()
+prompt_yes_no "继续？" "y" confirm 2>/dev/null || fail "missing answer should use default y"
+if prompt_yes_no "删除？" "n" 2>/dev/null; then fail "keyless prompt should use default n"; fi
+SBP_ANSWERS=([confirm]="maybe")
+if ( prompt_yes_no "继续？" "y" confirm ) 2>/dev/null; then fail "invalid y/n answer accepted"; fi
+
+assert_eq "false" "$(SBP_ANSWERS=([snell_tfo]="n"); prompt_snell_bool_value "TFO？" "true" snell_tfo 2>/dev/null)" "bool prompt honours key"
+
+SBP_ANSWERS=()
+agent_read_answers <<'ANSWERS'
+snell_psk=abc=def==
+
+snell_port=2346
+ANSWERS
+assert_eq "abc=def==" "${SBP_ANSWERS[snell_psk]}" "answer values may contain ="
+assert_eq "2346" "${SBP_ANSWERS[snell_port]}" "second answer parsed"
+if ( agent_read_answers <<< 'Bad-Key=1' ) 2>/dev/null; then fail "invalid answer key accepted"; fi
+if ( agent_read_answers <<< 'novalue' ) 2>/dev/null; then fail "answer without = accepted"; fi
+
+assert_eq "snell_wizard_flow" "$(agent_run_handler snell.configure)" "known action"
+if agent_run_handler "rm -rf" >/dev/null; then fail "unknown action accepted"; fi
+if ( agent_run bogus.action ) 2>/dev/null; then fail "agent_run accepted unknown action"; fi
+
+SBP_NONINTERACTIVE="false"
+
 printf "PASS: agent mode\n"

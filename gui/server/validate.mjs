@@ -76,3 +76,44 @@ export function parseLogLines(value) {
   if (!Number.isInteger(n) || n < 1 || n > 5000) return null;
   return n;
 }
+
+export const RUN_ACTIONS = [
+  'singbox.install',
+  'singbox.update',
+  'singbox.uninstall',
+  'anytls.configure',
+  'anytls.uninstall',
+  'vless_reality.configure',
+  'socks5.configure',
+  'snell.configure',
+  'snell.upgrade_v6',
+  'snell.update',
+  'snell.uninstall',
+  'trusttunnel.configure',
+  'trusttunnel.update',
+  'trusttunnel.uninstall',
+];
+
+export function isValidRunAction(action) {
+  return RUN_ACTIONS.includes(action);
+}
+
+/**
+ * 校验操作答案：键只能是小写字母、数字和下划线；值为单行字符串。
+ * 答案经 stdin 以 key=value 逐行传给远端脚本，因此值里不能有换行或 NUL。
+ */
+export function validateAnswers(input) {
+  if (input === undefined || input === null) return { ok: true, value: [] };
+  if (typeof input !== 'object' || Array.isArray(input)) return { ok: false, error: 'answers 必须是对象' };
+  const entries = Object.entries(input);
+  if (entries.length > 40) return { ok: false, error: '答案过多' };
+  const value = [];
+  for (const [key, raw] of entries) {
+    if (!/^[a-z0-9_]{1,40}$/.test(key)) return { ok: false, error: `答案键不合法: ${key}` };
+    if (raw === undefined || raw === null || raw === '') continue;
+    const text = String(raw);
+    if (text.length > 1024 || /[\r\n\u0000]/.test(text)) return { ok: false, error: `答案 ${key} 不能包含换行，且不能超过 1024 个字符` };
+    value.push([key, text]);
+  }
+  return { ok: true, value };
+}

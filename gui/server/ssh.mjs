@@ -132,6 +132,37 @@ export function runSsh(server, remoteCommand, { input = null, timeoutMs = 120_00
   });
 }
 
+/** 执行远端命令并把 stdout/stderr 实时交给 onData，返回退出码。 */
+export function streamSsh(server, remoteCommand, { input = null, onData, timeoutMs = 20 * 60_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn('ssh', [...sshArgs(server), remoteCommand], { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const errTail = [];
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    child.stdout.on('data', (chunk) => onData(chunk));
+    child.stderr.on('data', (chunk) => {
+      errTail.push(chunk);
+      if (errTail.length > 50) errTail.shift();
+      onData(chunk);
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err.code === 'ENOENT' ? new Error('本机未找到 ssh 命令') : err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? -1, stderr: Buffer.concat(errTail).toString('utf8') });
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input ?? undefined);
+  });
+}
+
 export async function runAgent(server, args, options) {
   const result = await runSsh(server, agentCommand(args), options);
   if (result.code !== 0) {

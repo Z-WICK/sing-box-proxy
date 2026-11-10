@@ -66,7 +66,8 @@ if validate_snell_psk "bad space"; then
   fail "psk with spaces accepted"
 fi
 validate_snell_psk "Abcdef1234567890" "6" || fail "valid Snell v6 psk rejected"
-if validate_snell_psk "Abc123456789" "6"; then
+validate_snell_psk "Abc123456789" "6" || fail "12-character Snell v6 psk rejected"
+if validate_snell_psk "Abc12345678" "6"; then
   fail "short Snell v6 psk accepted"
 fi
 snell_v6_long_psk="$(printf 'a%.0s' {1..255})"
@@ -104,7 +105,7 @@ fi
 
 assert_eq "4.1.1" "$(snell_release_version_for_protocol 4)" "Snell v4 release mapping"
 assert_eq "5.0.1" "$(snell_release_version_for_protocol 5)" "Snell v5 release mapping"
-assert_eq "6.0.0rc2" "$(snell_release_version_for_protocol 6)" "Snell v6 release mapping"
+assert_eq "6.0.0" "$(snell_release_version_for_protocol 6)" "Snell v6 release mapping"
 assert_eq "https://dl.nssurge.com/snell/snell-server-v6.0.0rc2-linux-amd64.zip" "$(snell_download_url "6.0.0rc2" "amd64")" "Snell v6 download URL"
 validate_snell_arch_for_release "6.0.0rc2" "aarch64" || fail "Snell v6 aarch64 rejected"
 if validate_snell_arch_for_release "6.0.0rc2" "armv7l"; then
@@ -118,6 +119,28 @@ release_notes_fixture="$(printf '%s\n' \
   'https://dl.nssurge.com/snell/snell-server-v5.0.1-linux-amd64.zip')"
 assert_eq "6.0.0rc2" "$(extract_latest_snell_release_version 6 <<< "$release_notes_fixture")" "extract latest Snell v6 release"
 assert_eq "5.0.1" "$(extract_latest_snell_release_version 5 <<< "$release_notes_fixture")" "extract latest Snell v5 release"
+release_notes_fixture="$(printf '%s\n' \
+  'https://dl.nssurge.com/snell/snell-server-v6.0.0rc2-linux-amd64.zip' \
+  'https://dl.nssurge.com/snell/snell-server-v6.0.0-linux-amd64.zip' \
+  'https://dl.nssurge.com/snell/snell-server-v4.1.1-linux-amd64.zip')"
+assert_eq "6.0.0" "$(extract_latest_snell_release_version 6 <<< "$release_notes_fixture")" "extract Snell v6 final over RC"
+
+fetch_latest_snell_release_version() {
+  extract_latest_snell_release_version "$1" <<< "$release_notes_fixture" || return 2
+}
+SNELL_FETCH_LATEST_RELEASES="true"
+assert_eq "6.0.0" "$(snell_release_version_for_protocol 6 2>&1)" "fetched Snell v6 release"
+assert_eq "5.0.1" "$(snell_release_version_for_protocol 5 2>&1)" "unlisted Snell v5 falls back without warning"
+fetch_latest_snell_release_version() {
+  return 1
+}
+warn() {
+  printf "WARN:%s\n" "$*"
+}
+fallback_output="$(snell_release_version_for_protocol 6 2>&1)"
+[[ "$fallback_output" == WARN:*$'\n'"6.0.0" ]] || fail "fetch failure should warn and fall back: '${fallback_output}'"
+SNELL_FETCH_LATEST_RELEASES="false"
+unset -f warn
 
 prompted_obfs="$(prompt_snell_obfs "off" 2>/dev/null <<< "")"
 assert_eq "off" "$prompted_obfs" "Snell OBFS prompt stdout"
@@ -180,6 +203,20 @@ while IFS=$'\t' read -r key value; do
 done <<< "$parsed"
 assert_eq "default" "${details[mode]}" "parsed v6 mode"
 assert_eq "ipv4-only" "${details[dns_ip_preference]}" "parsed v6 DNS preference"
+
+SNELL_MULTI_LISTEN_CONFIG="${SNELL_CONFIG_DIR}/multi-listen.conf"
+printf '%s\n' "[snell-server]" "listen = 0.0.0.0:5678,[::]:5678" "psk = multiPSK1234" "ipv-preference = prefer-ipv6" > "$SNELL_MULTI_LISTEN_CONFIG"
+parsed="$(extract_snell_config_details "$SNELL_MULTI_LISTEN_CONFIG")"
+details=()
+while IFS=$'\t' read -r key value; do
+  details["$key"]="$value"
+done <<< "$parsed"
+assert_eq "5678" "${details[port]}" "parsed multi-address listen port"
+assert_eq "prefer-ipv6" "${details[dns_ip_preference]}" "parsed ipv-preference alias"
+migrate_snell_config_to_protocol "$SNELL_MULTI_LISTEN_CONFIG" "6"
+assert_file_contains "$SNELL_MULTI_LISTEN_CONFIG" "listen = 0.0.0.0:5678,[::]:5678" "v6 migration keeps multi-address listen"
+assert_file_contains "$SNELL_MULTI_LISTEN_CONFIG" "dns-ip-preference = prefer-ipv6" "v6 migration normalizes ipv-preference"
+assert_file_not_contains "$SNELL_MULTI_LISTEN_CONFIG" "ipv-preference =" "v6 migration drops duplicate alias"
 
 SNELL_V5_CONFIG="${SNELL_CONFIG_DIR}/v5.conf"
 write_snell_config "$SNELL_V5_CONFIG" "3456" "v5PSK12345678901" "tls" "example.com" "true" "false" "1.1.1.1" "5"

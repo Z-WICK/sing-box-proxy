@@ -391,7 +391,7 @@ socks5_wizard_flow() {
   if [[ -n "$existing_config_path" && -f "$config_path" ]] && config_has_socks5_inbound "$config_path"; then
     info "检测到现有 SOCKS5 服务: ${CURRENT_SERVICE_NAME}"
     info "当前配置文件: ${config_path}"
-    if prompt_yes_no "保持现有 SOCKS5 配置并查看参数？" "y"; then
+    if prompt_yes_no "保持现有 SOCKS5 配置并查看参数？" "y" keep_existing; then
       show_socks5_parameters_for_service "$CURRENT_SERVICE_NAME" || true
       return 0
     fi

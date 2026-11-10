@@ -6,9 +6,9 @@ export function serverHealth(status) {
   return 'up';
 }
 
-const LABELS = { unknown: '检测中', down: '无法连接', warn: '有服务未运行', up: '正常' };
+export const HEALTH_LABELS = { up: '在线', warn: '有服务未运行', down: '无法连接', unknown: '检测中' };
 
-export default function StatusDot({ status }) {
-  const health = serverHealth(status);
-  return <span className={`dot dot-${health}`} title={LABELS[health]} aria-label={LABELS[health]} />;
+export default function StatusDot({ status, health: forced }) {
+  const health = forced || serverHealth(status);
+  return <span className={`dot dot-${health}`} title={HEALTH_LABELS[health]} role="img" aria-label={HEALTH_LABELS[health]} />;
 }

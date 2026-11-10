@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef, useState } from 'react';
 import { terminalUrl } from '../api.js';
+import Icon from './Icon.jsx';
 
 export default function TerminalPanel({ server, visible, onSessionEnd }) {
   const hostRef = useRef(null);
@@ -14,10 +15,22 @@ export default function TerminalPanel({ server, visible, onSessionEnd }) {
   useEffect(() => {
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontFamily: '"Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 13,
+      lineHeight: 1.25,
       scrollback: 5000,
-      theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#7ee787' },
+      theme: {
+        background: '#101828',
+        foreground: '#dbe4f3',
+        cursor: '#5eead4',
+        selectionBackground: '#3d5afe55',
+        green: '#34d399',
+        brightGreen: '#6ee7b7',
+        blue: '#7c9cff',
+        brightBlue: '#a5b8ff',
+        yellow: '#fbbf24',
+        red: '#f87171',
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -102,27 +115,41 @@ export default function TerminalPanel({ server, visible, onSessionEnd }) {
 
   const active = state === 'open' || state === 'connecting';
 
+  const stateText = {
+    idle: '未连接',
+    connecting: '正在连接',
+    open: mode === 'menu' ? '管理菜单' : 'Root Shell',
+    closed: '会话已结束',
+  }[state];
+
   return (
     <div className="terminal-panel">
-      <div className="terminal-toolbar">
-        <button type="button" className={`btn small ${mode === 'menu' && active ? 'primary' : ''}`} onClick={() => connect('menu')}>
-          管理菜单
-        </button>
-        <button type="button" className={`btn small ${mode === 'shell' && active ? 'primary' : ''}`} onClick={() => connect('shell')}>
-          Root Shell
-        </button>
-        {active && (
-          <button type="button" className="btn small danger-ghost" onClick={disconnect}>
-            断开
-          </button>
-        )}
-        <span className="muted small">
-          {state === 'connecting' && '连接中…'}
-          {state === 'open' && '已连接 · 调整窗口大小后请重新连接以同步终端尺寸'}
-          {state === 'closed' && '会话已结束'}
-        </span>
+      <div className="terminal-window">
+        <div className="terminal-bar">
+          <div className="segmented" role="group" aria-label="终端模式">
+            <button type="button" className={mode === 'menu' && active ? 'on' : ''} onClick={() => connect('menu')}>
+              <Icon name="logs" size={14} />
+              管理菜单
+            </button>
+            <button type="button" className={mode === 'shell' && active ? 'on' : ''} onClick={() => connect('shell')}>
+              <Icon name="terminal" size={14} />
+              Root Shell
+            </button>
+          </div>
+          <span className={`term-state term-${state}`}>
+            <span className="term-led" />
+            {stateText}
+            <span className="term-host mono">{server.host}</span>
+          </span>
+          {active && (
+            <button type="button" className="term-close" onClick={disconnect}>
+              断开
+            </button>
+          )}
+        </div>
+        <div className="terminal-host" ref={hostRef} />
       </div>
-      <div className="terminal-host" ref={hostRef} />
+      <p className="hint">窗口大小改变后，重新连接即可让终端尺寸跟上。</p>
     </div>
   );
 }

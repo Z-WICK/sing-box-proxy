@@ -642,7 +642,7 @@ uninstall_anytls_service_flow() {
   metadata_path="$(metadata_path_for_service "$service_name")"
 
   warn "将卸载 AnyTLS 服务: ${service_name}"
-  if ! prompt_yes_no "继续吗？" "n"; then
+  if ! prompt_yes_no "继续吗？" "n" confirm; then
     return 0
   fi
 
@@ -1326,16 +1326,16 @@ anytls_wizard_flow() {
     info "当前配置文件: ${config_path}"
     if is_listen_port_occupied "$conflict_target_addr" "$conflict_target_port" && ! service_owns_listen_port "$CURRENT_SERVICE_NAME" "$conflict_target_port"; then
       warn "检测到当前 AnyTLS 端口 ${conflict_target_port} 已被其他进程占用，保持不变会继续起不来。"
-      if prompt_yes_no "按脚本重配当前 AnyTLS，并默认改用 ${ANYTLS_FALLBACK_LISTEN_PORT}？" "y"; then
+      if prompt_yes_no "按脚本重配当前 AnyTLS，并默认改用 ${ANYTLS_FALLBACK_LISTEN_PORT}？" "y" anytls_fix_port_conflict; then
         migrate_existing_anytls_flow "$CURRENT_SERVICE_NAME"
         return 0
       fi
     fi
-    if prompt_yes_no "接管现有配置并保持当前 AnyTLS 不变？" "y"; then
+    if prompt_yes_no "接管现有配置并保持当前 AnyTLS 不变？" "y" keep_existing; then
       adopt_existing_anytls_flow "$CURRENT_SERVICE_NAME"
       return 0
     fi
-    if prompt_yes_no "按脚本重配当前 AnyTLS，并沿用现有密码/端口/证书路径？" "y"; then
+    if prompt_yes_no "按脚本重配当前 AnyTLS，并沿用现有密码/端口/证书路径？" "y" anytls_reconfigure; then
       migrate_existing_anytls_flow "$CURRENT_SERVICE_NAME"
       return 0
     fi

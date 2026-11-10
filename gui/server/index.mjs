@@ -6,11 +6,13 @@ import { createServer } from 'node:http';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { ScriptSyncer, SshError, runAgent } from './ssh.mjs';
+import { ScriptSyncer, SshError, agentCommand, explainSshFailure, runAgent, streamSsh } from './ssh.mjs';
 import { listSshHosts } from './sshconfig.mjs';
 import { ServerStore } from './store.mjs';
 import { TERMINAL_MODES, attachTerminal } from './terminal.mjs';
 import {
+  isValidRunAction,
+  validateAnswers,
   isValidProtocol,
   isValidServiceAction,
   isValidUnit,
@@ -23,6 +25,7 @@ const GUI_ROOT = resolve(HERE, '..');
 const REPO_ROOT = resolve(GUI_ROOT, '..');
 const DIST_DIR = join(GUI_ROOT, 'dist');
 const MAX_BODY = 64 * 1024;
+export const EXIT_MARK = '\u0000SBP_EXIT:';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -140,7 +143,9 @@ function errorStatus(err) {
   return 500;
 }
 
-export function createApp({ store, syncer, token, sshHosts = listSshHosts }) {
+export function createApp({ store, syncer, token, sshHosts = listSshHosts, stream = streamSsh }) {
+  const running = new Set();
+
   async function withServer(id, res, fn) {
     const server = store.get(id);
     if (!server) {
@@ -226,6 +231,39 @@ export function createApp({ store, syncer, token, sshHosts = listSshHosts }) {
         await syncer.ensure(server);
         const { stdout, stderr } = await runAgent(server, ['service', body.unit, body.action]);
         sendJson(res, 200, { output: `${stdout}${stderr}`.trim() });
+      });
+    }],
+    ['POST', /^\/api\/servers\/([\w-]+)\/run$/, async (req, res, [id]) => {
+      const body = await readJson(req);
+      if (!isValidRunAction(body.action)) return sendJson(res, 400, { error: '不支持的操作' });
+      const answers = validateAnswers(body.answers);
+      if (!answers.ok) return sendJson(res, 400, { error: answers.error });
+      await withServer(id, res, async (server) => {
+        if (running.has(id)) return sendJson(res, 409, { error: '这台服务器上已有操作正在执行，请等它完成。' });
+        running.add(id);
+        try {
+          await syncer.ensure(server);
+          res.writeHead(200, {
+            'content-type': 'text/plain; charset=utf-8',
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          });
+          const input = answers.value.map(([k, v]) => `${k}=${v}\n`).join('');
+          let result;
+          try {
+            result = await stream(server, agentCommand(['run', body.action, '--answers-stdin']), {
+              input,
+              onData: (chunk) => res.write(chunk),
+            });
+          } catch (err) {
+            res.write(`\n[ERR ] ${err.message}\n`);
+            result = { code: -1, stderr: '' };
+          }
+          if (result.code === 255) res.write(`\n[ERR ] ${explainSshFailure(255, result.stderr)}\n`);
+          res.end(`\n${EXIT_MARK}${result.code}\n`);
+        } finally {
+          running.delete(id);
+        }
       });
     }],
     ['GET', /^\/api\/servers\/([\w-]+)\/logs$/, async (req, res, [id], query) => {

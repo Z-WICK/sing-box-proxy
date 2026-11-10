@@ -145,10 +145,10 @@ prompt_reality_server_name() {
 
   while true; do
     if [[ -n "$default_value" ]]; then
-      read -r -p "伪装域名（REALITY server_name）[${default_value}]: " user_input
+      ask_text user_input reality_server_name "伪装域名（REALITY server_name）[${default_value}]: "
       user_input="${user_input:-$default_value}"
     else
-      read -r -p "伪装域名（REALITY server_name）: " user_input
+      ask_text user_input reality_server_name "伪装域名（REALITY server_name）: "
     fi
 
     user_input="${user_input,,}"
@@ -704,7 +704,7 @@ vless_reality_wizard_flow() {
       warn "现有 VLESS Reality 配置未启用防偷跑模式，建议重写配置。"
       keep_existing_default="n"
     fi
-    if prompt_yes_no "接管现有 VLESS Reality 配置并保持不变？" "$keep_existing_default"; then
+    if prompt_yes_no "接管现有 VLESS Reality 配置并保持不变？" "$keep_existing_default" keep_existing; then
       show_vless_reality_parameters_for_service "$CURRENT_SERVICE_NAME" || true
       return 0
     fi
@@ -780,7 +780,7 @@ vless_reality_wizard_flow() {
     if [[ -z "$public_key" ]]; then
       warn "当前未记录对应的 Reality 公钥，已重新生成密钥以保证 URI 可用。"
       private_key=""
-    elif ! prompt_yes_no "沿用现有 Reality 私钥？" "y"; then
+    elif ! prompt_yes_no "沿用现有 Reality 私钥？" "y" reuse_private_key; then
       private_key=""
     fi
   fi

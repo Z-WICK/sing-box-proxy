@@ -72,6 +72,10 @@ PROTOCOL_GROUP_LABELS=()
 PROTOCOL_ITEM_GROUPS=()
 PROTOCOL_ITEM_LABELS=()
 PROTOCOL_ITEM_HANDLERS=()
+# 非交互模式（--agent run）：问题的答案由图形控制台通过 stdin 提供。
+SBP_NONINTERACTIVE="false"
+declare -A SBP_ANSWERS=()
+declare -A SBP_ANSWER_ASKED=()
 
 validate_service_name() {
   local service_name="$1"
@@ -807,10 +811,57 @@ is_service_enabled() {
   systemctl is-enabled --quiet "$service_name"
 }
 
+is_noninteractive() {
+  [[ "$SBP_NONINTERACTIVE" == "true" ]]
+}
+
+# ask_text <变量名> <答案键> <提示> [secret]
+# 交互模式从终端读取；非交互模式取对应答案，未提供时为空（由调用方按默认值处理）。
+# 非交互模式下同一个键被再次询问，说明调用方校验失败，直接报错退出而不是无限重试。
+ask_text() {
+  local __sbp_var="$1"
+  local __sbp_key="$2"
+  local __sbp_prompt="$3"
+  local __sbp_secret="${4:-}"
+  local __sbp_value=""
+
+  if is_noninteractive; then
+    if [[ -n "${SBP_ANSWER_ASKED[$__sbp_key]:-}" ]]; then
+      if [[ "$__sbp_secret" == "secret" || "$__sbp_key" =~ (psk|password) ]]; then
+        die "参数 ${__sbp_key} 的值无效。"
+      fi
+      die "参数 ${__sbp_key} 的值无效：${SBP_ANSWERS[$__sbp_key]:-（未填写）}"
+    fi
+    SBP_ANSWER_ASKED[$__sbp_key]=1
+    __sbp_value="${SBP_ANSWERS[$__sbp_key]:-}"
+  elif [[ "$__sbp_secret" == "secret" ]]; then
+    read -r -s -p "$__sbp_prompt" __sbp_value
+    printf "\n" >&2
+  else
+    read -r -p "$__sbp_prompt" __sbp_value
+  fi
+
+  printf -v "$__sbp_var" '%s' "$__sbp_value"
+}
+
+# prompt_yes_no <提示> <默认 y|n> [答案键]
 prompt_yes_no() {
   local prompt="$1"
   local default_value="$2"
+  local key="${3:-}"
   local answer
+
+  if is_noninteractive; then
+    answer="$default_value"
+    if [[ -n "$key" && -n "${SBP_ANSWERS[$key]:-}" ]]; then
+      answer="${SBP_ANSWERS[$key]}"
+    fi
+    case "${answer,,}" in
+      y|yes|true|1|是) info "${prompt} → 是"; return 0 ;;
+      n|no|false|0|否) info "${prompt} → 否"; return 1 ;;
+      *) die "参数 ${key:-confirm} 只能是 y 或 n：${answer}" ;;
+    esac
+  fi
 
   while true; do
     if [[ "$default_value" == "y" ]]; then
@@ -837,12 +888,12 @@ service_unit_file_path() {
 
 uninstall_singbox_full_flow() {
   warn "完整卸载将删除 sing-box 二进制和全部 sing-box 服务。"
-  if ! prompt_yes_no "确认继续完整卸载吗？" "n"; then
+  if ! prompt_yes_no "确认继续完整卸载吗？" "n" confirm; then
     return 0
   fi
 
   local confirm
-  read -r -p "输入 UNINSTALL（或“卸载”）继续: " confirm
+  ask_text confirm confirm_text "输入 UNINSTALL（或“卸载”）继续: "
   if [[ "$confirm" != "UNINSTALL" && "$confirm" != "卸载" ]]; then
     warn "确认口令不匹配，已取消。"
     return 0
@@ -887,19 +938,19 @@ uninstall_singbox_full_flow() {
     fi
   fi
 
-  if prompt_yes_no "删除 sing-box 二进制 ${BINARY_PATH}？" "y"; then
+  if prompt_yes_no "删除 sing-box 二进制 ${BINARY_PATH}？" "y" delete_binary; then
     if [[ -f "$BINARY_PATH" ]]; then
       rm -f "$BINARY_PATH"
       ok "已删除二进制: ${BINARY_PATH}"
     fi
   fi
 
-  if prompt_yes_no "删除备份二进制 ${BINARY_PATH}.bak-* ?" "n"; then
+  if prompt_yes_no "删除备份二进制 ${BINARY_PATH}.bak-* ?" "n" delete_backups; then
     find "$INSTALL_DIR" -maxdepth 1 -type f -name 'sing-box.bak-*' -print -delete || true
     ok "已删除 ${INSTALL_DIR} 下的备份二进制"
   fi
 
-  if prompt_yes_no "删除服务引用的配置文件？" "y"; then
+  if prompt_yes_no "删除服务引用的配置文件？" "y" delete_configs; then
     local cfg_path
     for cfg_path in "${config_paths[@]}"; do
       if [[ -f "$cfg_path" ]]; then
@@ -916,14 +967,14 @@ uninstall_singbox_full_flow() {
     done
   fi
 
-  if prompt_yes_no "删除 /etc/sing-box 目录？" "n"; then
+  if prompt_yes_no "删除 /etc/sing-box 目录？" "n" delete_config_dir; then
     if [[ -d "/etc/sing-box" ]]; then
       rm -rf "/etc/sing-box"
       ok "已删除目录: /etc/sing-box"
     fi
   fi
 
-  if prompt_yes_no "删除 AnyTLS/VLESS/SOCKS5 元数据和客户端导入文件？" "y"; then
+  if prompt_yes_no "删除 AnyTLS/VLESS/SOCKS5 元数据和客户端导入文件？" "y" delete_metadata; then
     rm -rf "$ANYTLS_METADATA_DIR" "$VLESS_REALITY_METADATA_DIR" "$VLESS_REALITY_LEGACY_METADATA_DIR" "$SOCKS5_METADATA_DIR" "$SOCKS5_LEGACY_METADATA_DIR" "$CLIENT_IMPORT_DIR" "$CLIENT_IMPORT_PUBLISH_DIR"
     ok "已删除 ${ANYTLS_METADATA_DIR}、${VLESS_REALITY_METADATA_DIR}、${VLESS_REALITY_LEGACY_METADATA_DIR}、${SOCKS5_METADATA_DIR}、${SOCKS5_LEGACY_METADATA_DIR}、${CLIENT_IMPORT_DIR} 和 ${CLIENT_IMPORT_PUBLISH_DIR}"
   fi
@@ -992,7 +1043,7 @@ prompt_service_name() {
     default_service="$CURRENT_SERVICE_NAME"
   fi
 
-  read -r -p "服务名 [${default_service}]: " user_input
+  ask_text user_input service "服务名 [${default_service}]: "
   user_input="${user_input:-$default_service}"
   CURRENT_SERVICE_NAME="$(normalize_service_name "$user_input")"
 }
@@ -1153,12 +1204,12 @@ configure_service_flow() {
   fi
 
   default_config_path="${existing_config_path:-$DEFAULT_CONFIG_PATH}"
-  read -r -p "配置路径 [${default_config_path}]: " config_path
+  ask_text config_path config_path "配置路径 [${default_config_path}]: "
   config_path="${config_path:-$default_config_path}"
 
   if [[ ! -f "$config_path" ]]; then
     warn "未找到配置: ${config_path}"
-    if prompt_yes_no "现在创建默认配置？" "y"; then
+    if prompt_yes_no "现在创建默认配置？" "y" create_default_config; then
       write_default_config_if_missing "$config_path"
     else
       die "启动服务需要配置文件。"
@@ -1227,12 +1278,12 @@ install_flow() {
   local latest_version target_version
 
   latest_version="$(fetch_latest_version)"
-  read -r -p "目标版本 [${latest_version}]: " target_version
+  ask_text target_version singbox_version "目标版本 [${latest_version}]: "
   target_version="${target_version:-$latest_version}"
 
   install_or_update_version "$target_version"
 
-  if prompt_yes_no "现在配置 systemd 服务？" "y"; then
+  if prompt_yes_no "现在配置 systemd 服务？" "y" configure_service; then
     configure_service_flow
   fi
 }
@@ -1251,11 +1302,11 @@ update_flow() {
   printf "当前版本: %s\n" "$installed"
   printf "最新版本: %s\n" "$latest_version"
 
-  read -r -p "目标版本 [${latest_version}]: " target_version
+  ask_text target_version singbox_version "目标版本 [${latest_version}]: "
   target_version="${target_version:-$latest_version}"
 
   if [[ "$(normalize_version "$target_version")" == "$(normalize_version "$installed")" ]]; then
-    if ! prompt_yes_no "目标版本与当前版本一致，仍要重装吗？" "n"; then
+    if ! prompt_yes_no "目标版本与当前版本一致，仍要重装吗？" "n" reinstall_same; then
       return 0
     fi
   fi
@@ -1264,7 +1315,7 @@ update_flow() {
 
   prompt_service_name
   if service_exists "$CURRENT_SERVICE_NAME"; then
-    if prompt_yes_no "更新后重启 ${CURRENT_SERVICE_NAME}？" "y"; then
+    if prompt_yes_no "更新后重启 ${CURRENT_SERVICE_NAME}？" "y" restart_after_update; then
       if is_service_active "$CURRENT_SERVICE_NAME"; then
         systemctl restart "$CURRENT_SERVICE_NAME"
         ok "已重启 ${CURRENT_SERVICE_NAME}"
@@ -1278,7 +1329,7 @@ update_flow() {
     fi
   else
     warn "未找到服务: ${CURRENT_SERVICE_NAME}"
-    if prompt_yes_no "现在创建服务？" "y"; then
+    if prompt_yes_no "现在创建服务？" "y" create_service; then
       configure_service_flow
     fi
   fi
@@ -1624,6 +1675,67 @@ agent_logs() {
   journalctl -u "$unit" -n "$lines" --no-pager 2>&1 || true
 }
 
+# 图形控制台可执行的操作白名单：操作名 → 处理函数。
+agent_run_handler() {
+  case "$1" in
+    singbox.install) printf "install_flow" ;;
+    singbox.update) printf "update_flow" ;;
+    singbox.uninstall) printf "uninstall_singbox_full_flow" ;;
+    anytls.configure) printf "anytls_wizard_flow" ;;
+    anytls.uninstall) printf "agent_uninstall_anytls" ;;
+    vless_reality.configure) printf "vless_reality_wizard_flow" ;;
+    socks5.configure) printf "socks5_wizard_flow" ;;
+    snell.configure) printf "snell_wizard_flow" ;;
+    snell.upgrade_v6) printf "upgrade_snell_to_v6_flow" ;;
+    snell.update) printf "update_snell_server_flow" ;;
+    snell.uninstall) printf "uninstall_snell_flow" ;;
+    trusttunnel.configure) printf "trusttunnel_wizard_flow" ;;
+    trusttunnel.update) printf "update_trusttunnel_flow" ;;
+    trusttunnel.uninstall) printf "uninstall_trusttunnel_flow" ;;
+    *) return 1 ;;
+  esac
+}
+
+agent_uninstall_anytls() {
+  local service_name="${SBP_ANSWERS[service]:-$ANYTLS_STANDARD_SERVICE_NAME}"
+  agent_require_managed_unit "$(normalize_service_name "$service_name")"
+  uninstall_anytls_service_flow "$service_name"
+}
+
+# 从 stdin 读取 key=value 形式的答案（避免密码等出现在进程参数里）。
+agent_read_answers() {
+  local line key
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    key="${line%%=*}"
+    if [[ "$line" != *=* || ! "$key" =~ ^[a-z0-9_]{1,40}$ ]]; then
+      die "答案格式不合法: ${key}"
+    fi
+    SBP_ANSWERS[$key]="${line#*=}"
+  done
+}
+
+agent_run() {
+  local action="${1:-}"
+  local handler
+  handler="$(agent_run_handler "$action")" || die "未知操作: ${action}"
+  declare -F "$handler" >/dev/null 2>&1 || die "操作 ${action} 所需的模块未加载。"
+
+  if [[ "${2:-}" == "--answers-stdin" ]]; then
+    agent_read_answers
+  fi
+
+  # 之后任何遗漏的 read 都会立即读到 EOF 失败，而不是卡住等待输入。
+  exec </dev/null
+  SBP_NONINTERACTIVE="true"
+  # 日志会显示在图形界面里：关掉 curl 的进度条，但保留错误信息。
+  curl() { command curl -sS "$@"; }
+
+  info "开始执行: ${action}"
+  "$handler"
+  ok "操作完成: ${action}"
+}
+
 agent_usage() {
   cat <<'USAGE'
 用法: sing-box-proxy-manager.sh --agent <command> [args]
@@ -1632,6 +1744,8 @@ agent_usage() {
   params <protocol> [unit]     输出协议参数 (anytls|vless_reality|socks5|snell|trusttunnel)
   service <unit> <action>      start|stop|restart|enable|disable
   logs <unit> [lines]          输出 journalctl 日志
+  run <action> [--answers-stdin]
+                               非交互执行安装/配置/卸载等操作，答案从 stdin 按 key=value 逐行读取
   menu                         进入交互菜单（用于图形控制台的终端）
 USAGE
 }
@@ -1653,6 +1767,7 @@ agent_main() {
     params) agent_params "$@" ;;
     service) agent_service "$@" ;;
     logs) agent_logs "$@" ;;
+    run) agent_run "$@" ;;
     menu) main_menu ;;
     ""|help|-h|--help) agent_usage ;;
     *) agent_usage >&2; die "未知 agent 命令: ${command}" ;;

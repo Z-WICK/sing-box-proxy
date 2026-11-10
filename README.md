@@ -32,7 +32,7 @@ VLESS Reality 默认启用防偷跑模式。脚本会把 Reality fallback 接到
 
 SOCKS5 会默认创建独立的 `sing-box-socks5.service`，监听 `0.0.0.0:1080`，如果端口被占用会改用 `1081`。脚本会生成用户名和密码，不创建匿名公开代理。
 
-Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前支持 Snell v4/v5 和 v6，默认新装 v6；安装或更新时会从 Surge 官方发布页解析所选协议的全部构建并选择最高版本，获取失败时回退到脚本内置版本（当前 v6 回退版本为 `v6.0.0rc2`）。配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。Snell 菜单提供 v4/v5 到 v6 的保配置升级，迁移时保留监听端口、PSK、DNS、TFO、`egress-interface` 和未知配置项，失败会回滚二进制和配置。Snell v6 的 PSK 必须为 16-255 位；启用 TFO 时仅设置 `net.ipv4.tcp_fastopen`，不修改全局 BBR 或其他网络参数。v6 官方仅提供 `amd64`、`i386`、`aarch64` 构建，不支持 `armv7l`。
+Snell 会创建独立的 `snell-server.service`，使用 Surge 官方 `snell-server` 二进制，不经过 sing-box。当前支持 Snell v4/v5 和 v6，默认新装 v6；安装或更新时会从 Surge 官方发布页解析所选协议的全部构建并选择最高版本，获取失败时回退到脚本内置版本（当前 v6 回退版本为 `v6.0.0`；官方页已不再列出 v5 下载链接，v5 直接使用内置的 `v5.0.1`）。配置文件为 `/etc/snell/config.conf`，监听端口默认为 `2345`，如被占用会建议 `2346`。Snell 菜单提供 v4/v5 到 v6 的保配置升级，迁移时保留监听端口、PSK、DNS、TFO、`egress-interface` 和未知配置项，失败会回滚二进制和配置。Snell v6 的 PSK 必须为 12-255 位；v6 的 `listen` 支持逗号分隔的多个地址（如 `0.0.0.0:2345,[::]:2345`），端口不变时会原样保留；启用 TFO 时仅设置 `net.ipv4.tcp_fastopen`，不修改全局 BBR 或其他网络参数。v6 官方仅提供 `amd64`、`i386`、`aarch64` 构建，不支持 `armv7l`。
 
 TrustTunnel 会使用官方 endpoint 安装脚本下载独立的 `trusttunnel_endpoint`，默认安装到 `/opt/trusttunnel` 并创建 `trusttunnel.service`。配置向导会生成 `vpn.toml`、`hosts.toml`、`credentials.toml` 和 `rules.toml`，默认启用 HTTP/1.1 + HTTP/2；客户端连接地址可以是公网 IP，但 TLS 主机名/SNI 必须是域名；可使用自签证书或已有 PEM 证书。查看参数时会调用 endpoint 原生导出 `tt://?` 深链和 TOML 客户端配置，并按 HAProxy 前端端口展示公网端口；也可以通过 `TRUSTTUNNEL_PUBLIC_LISTEN_PORT` 显式指定公网端口。官方安装来源为 `https://raw.githubusercontent.com/TrustTunnel/TrustTunnel/refs/heads/master/scripts/install.sh`。
 
@@ -59,7 +59,8 @@ npm run app        # 构建前端并启动，macOS 会自动在浏览器中打�
 - **1Password**：配置了 1Password SSH Agent（`IdentityAgent` 或 `SSH_AUTH_SOCK`）时直接可用，连接时由 1Password 弹窗授权（Touch ID）。SSH 连接复用 10 分钟以减少弹窗，状态刷新最多 3 台并发。需要指定某把密钥时，填写 1Password 导出的 `.pub` 公钥路径。
 - **连接方式**：调用本机 `ssh`，沿用 `~/.ssh/config` 和 ssh-agent；只支持密钥登录。可以用 root 登录，也可以用配置了免密 sudo（NOPASSWD）的普通用户。第一次连接时会自动信任主机指纹（`StrictHostKeyChecking=accept-new`），之后指纹变化会被拒绝。
 - **脚本同步**：每次操作前会比对哈希，把本地 `scripts/` 和 `tools/` 推送到服务器的 `/root/sing-box-proxy`（同步的是本地工作区的当前内容，包括未提交的改动）。
-- **功能**：概览所有服务器的连通性、sing-box 版本和服务状态；查看各协议参数/客户端链接；查看日志；启动/停止/重启服务；在网页终端里运行完整的交互菜单（安装、配置向导、升级、卸载）或打开 root shell。
+- **功能**：概览所有服务器的连通性、sing-box 版本和服务状态；查看各协议参数、客户端链接和二维码；查看日志；启动/停止/重启服务。
+- **安装与配置**：sing-box 的安装/更新/卸载，以及 AnyTLS、VLESS Reality、SOCKS5、Snell、TrustTunnel 的安装、重新配置、升级和卸载都有图形表单，执行日志实时显示。表单里留空的项沿用现有配置或脚本默认值。需要更细的控制时，仍可在「终端」里运行原始交互菜单或打开 root shell。
 - **安全**：只监听 `127.0.0.1`，校验 Host 头和 WebSocket Origin，所有接口都需要每次启动时随机生成的令牌。服务器上不会开放新端口，也没有常驻 agent。
 - **环境变量**：`SBP_GUI_PORT`（端口）、`SBP_GUI_CONFIG_DIR`（清单目录）、`SBP_GUI_SSH_CONFIG`（使用独立 ssh 配置文件，等同 `ssh -F`）、`SBP_GUI_TOKEN`（固定令牌）。
 - **已知限制**：终端连接建立后，窗口尺寸变化不会同步到远端，调整窗口后需要重新连接。
@@ -76,6 +77,15 @@ sudo ./scripts/sing-box-proxy-manager.sh --agent logs snell-server.service 100
 ```
 
 `service` / `logs` 只接受本脚本管理的服务（`sing-box*.service`、Snell、TrustTunnel、导入链接服务）。
+
+安装、配置和卸载也可以非交互执行，答案按 `键=值` 逐行从 stdin 传入（不会出现在进程参数里），没给的答案使用交互模式下的默认值：
+
+```bash
+printf 'snell_version=6\nsnell_port=2345\nkeep_existing=n\n' \
+  | sudo ./scripts/sing-box-proxy-manager.sh --agent run snell.configure --answers-stdin
+```
+
+可用的操作见 `--agent help`；每个问题对应的键写在脚本的 `ask_text` / `prompt_yes_no` 调用处。答案不合法时脚本会报出对应的键并退出，不会重复询问。
 
 ## 目录
 

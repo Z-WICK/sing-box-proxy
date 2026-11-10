@@ -623,7 +623,7 @@ prompt_trusttunnel_port() {
   local default_value="$1"
   local value
   while true; do
-    read -r -p "TrustTunnel 监听端口 [${default_value}]: " value
+    ask_text value tt_port "TrustTunnel 监听端口 [${default_value}]: "
     value="${value:-$default_value}"
     if validate_trusttunnel_port "$value"; then
       printf "%s" "$value"
@@ -637,7 +637,7 @@ prompt_trusttunnel_hostname() {
   local default_value="$1"
   local value
   while true; do
-    read -r -p "TrustTunnel TLS 主机名/SNI [${default_value}]: " value
+    ask_text value tt_hostname "TrustTunnel TLS 主机名/SNI [${default_value}]: "
     value="${value:-$default_value}"
     if validate_trusttunnel_hostname "$value"; then
       printf "%s" "$value"
@@ -651,7 +651,7 @@ prompt_trusttunnel_server() {
   local default_value="$1"
   local value
   while true; do
-    read -r -p "客户端连接地址/IP [${default_value}]: " value
+    ask_text value tt_server "客户端连接地址/IP [${default_value}]: "
     value="${value:-$default_value}"
     if validate_client_server "$value"; then
       printf "%s" "$value"
@@ -665,7 +665,7 @@ prompt_trusttunnel_username() {
   local default_value="$1"
   local value
   while true; do
-    read -r -p "TrustTunnel 用户名 [${default_value}]: " value
+    ask_text value tt_username "TrustTunnel 用户名 [${default_value}]: "
     value="${value:-$default_value}"
     if validate_trusttunnel_username "$value"; then
       printf "%s" "$value"
@@ -678,8 +678,7 @@ prompt_trusttunnel_username() {
 prompt_trusttunnel_password() {
   local default_value="$1"
   local value
-  read -r -s -p "TrustTunnel 密码（留空沿用或自动生成）: " value
-  printf "\n" >&2
+  ask_text value tt_password "TrustTunnel 密码（留空沿用或自动生成）: " secret
   value="${value:-$default_value}"
   if ! validate_trusttunnel_password "$value"; then
     die "TrustTunnel 密码不能为空且不能包含换行。"
@@ -690,7 +689,7 @@ prompt_trusttunnel_password() {
 prompt_trusttunnel_cert_mode() {
   local default_value="$1"
   local value
-  read -r -p "证书方式 [1=自签证书, 2=使用已有证书] [${default_value}]: " value
+  ask_text value tt_cert_mode "证书方式 [1=自签证书, 2=使用已有证书] [${default_value}]: "
   value="${value:-$default_value}"
   case "$value" in
     1) printf "self-signed" ;;
@@ -702,9 +701,10 @@ prompt_trusttunnel_cert_mode() {
 prompt_trusttunnel_existing_path() {
   local label="$1"
   local default_value="$2"
+  local key="${3:-tt_cert_path}"
   local value
   while true; do
-    read -r -p "${label} [${default_value}]: " value
+    ask_text value "$key" "${label} [${default_value}]: "
     value="${value:-$default_value}"
     if validate_trusttunnel_path "$value" && [[ -f "$value" ]]; then
       printf "%s" "$value"
@@ -728,7 +728,7 @@ trusttunnel_generate_password() {
 
 trusttunnel_wizard_flow() {
   if [[ ! -x "$TRUSTTUNNEL_ENDPOINT_BINARY" ]]; then
-    if ! prompt_yes_no "未找到 TrustTunnel endpoint，现在安装官方版本？" "y"; then
+    if ! prompt_yes_no "未找到 TrustTunnel endpoint，现在安装官方版本？" "y" install_endpoint; then
       return 0
     fi
     install_trusttunnel_endpoint
@@ -785,7 +785,7 @@ trusttunnel_wizard_flow() {
 
   if [[ "$existing_found" == "true" ]]; then
     info "检测到现有 TrustTunnel 配置: ${TRUSTTUNNEL_VPN_CONFIG_PATH}"
-    if ! prompt_yes_no "重新配置 TrustTunnel？" "n"; then
+    if ! prompt_yes_no "重新配置 TrustTunnel？" "n" reconfigure; then
       show_trusttunnel_parameters_for_service "$service_name" || true
       return 0
     fi
@@ -798,8 +798,9 @@ trusttunnel_wizard_flow() {
     else
       listen_port="$existing_listen_port"
     fi
-  else
-    listen_port="$(pick_available_listen_port "$TRUSTTUNNEL_STANDARD_LISTEN_PORT" "$TRUSTTUNNEL_FALLBACK_LISTEN_PORT" "$TRUSTTUNNEL_STANDARD_LISTEN_ADDR")"
+  elif ! listen_port="$(pick_available_listen_port "$TRUSTTUNNEL_STANDARD_LISTEN_PORT" "$TRUSTTUNNEL_FALLBACK_LISTEN_PORT" "$TRUSTTUNNEL_STANDARD_LISTEN_ADDR" 2>/dev/null)"; then
+    warn "${TRUSTTUNNEL_STANDARD_LISTEN_PORT} 和 ${TRUSTTUNNEL_FALLBACK_LISTEN_PORT} 都已被占用，请指定其他监听端口。"
+    listen_port=""
   fi
   listen_port="$(prompt_trusttunnel_port "$listen_port")"
 
@@ -810,7 +811,7 @@ trusttunnel_wizard_flow() {
   password="$(prompt_trusttunnel_password "${existing_password:-$(trusttunnel_generate_password)}")"
   display_name="$existing_display_name"
   local display_name_input
-  read -r -p "客户端显示名称 [${display_name}]: " display_name_input
+  ask_text display_name_input tt_display_name "客户端显示名称 [${display_name}]: "
   display_name="${display_name_input:-$display_name}"
 
   if ! validate_trusttunnel_bool "$existing_ipv6"; then
@@ -820,7 +821,7 @@ trusttunnel_wizard_flow() {
   ipv6_default="n"
   [[ "$existing_ipv6" == "true" ]] && ipv6_default="y"
   ipv6_available="$existing_ipv6"
-  if prompt_yes_no "客户端/服务端启用 IPv6 路由？" "$ipv6_default"; then
+  if prompt_yes_no "客户端/服务端启用 IPv6 路由？" "$ipv6_default" tt_ipv6; then
     ipv6_available="true"
   else
     ipv6_available="false"
@@ -833,12 +834,12 @@ trusttunnel_wizard_flow() {
   fi
   cert_mode="$(prompt_trusttunnel_cert_mode "$cert_default")"
   if [[ "$cert_mode" == "existing" ]]; then
-    cert_path="$(prompt_trusttunnel_existing_path "证书链 PEM 路径" "$existing_cert_path")"
-    key_path="$(prompt_trusttunnel_existing_path "私钥 PEM 路径" "$existing_key_path")"
+    cert_path="$(prompt_trusttunnel_existing_path "证书链 PEM 路径" "$existing_cert_path" tt_cert_path)"
+    key_path="$(prompt_trusttunnel_existing_path "私钥 PEM 路径" "$existing_key_path" tt_key_path)"
   else
     cert_path="$TRUSTTUNNEL_CERT_PATH"
     key_path="$TRUSTTUNNEL_KEY_PATH"
-    if [[ ! -f "$cert_path" || ! -f "$key_path" ]] || ! prompt_yes_no "沿用现有 TrustTunnel 自签证书？" "y"; then
+    if [[ ! -f "$cert_path" || ! -f "$key_path" ]] || ! prompt_yes_no "沿用现有 TrustTunnel 自签证书？" "y" reuse_cert; then
       generate_trusttunnel_self_signed_certificate "$hostname" "$cert_path" "$key_path"
     fi
   fi
@@ -879,7 +880,7 @@ update_trusttunnel_flow() {
 
 uninstall_trusttunnel_flow() {
   warn "将停止并卸载 TrustTunnel endpoint。"
-  if ! prompt_yes_no "确认卸载 TrustTunnel？" "n"; then
+  if ! prompt_yes_no "确认卸载 TrustTunnel？" "n" confirm; then
     return 0
   fi
 
@@ -891,7 +892,7 @@ uninstall_trusttunnel_flow() {
     ok "已删除服务文件: ${service_file}"
   fi
 
-  if prompt_yes_no "删除 TrustTunnel 二进制和安装目录中的配置？" "y"; then
+  if prompt_yes_no "删除 TrustTunnel 二进制和安装目录中的配置？" "y" delete_files; then
     rm -f \
       "$TRUSTTUNNEL_ENDPOINT_BINARY" \
       "$TRUSTTUNNEL_SETUP_WIZARD" \
@@ -909,7 +910,7 @@ uninstall_trusttunnel_flow() {
 
   local metadata_path
   metadata_path="$(trusttunnel_metadata_path_for_service "$TRUSTTUNNEL_SERVICE_NAME")"
-  if [[ -f "$metadata_path" ]] && prompt_yes_no "删除 TrustTunnel 参数元数据？" "y"; then
+  if [[ -f "$metadata_path" ]] && prompt_yes_no "删除 TrustTunnel 参数元数据？" "y" delete_metadata; then
     rm -f "$metadata_path"
     ok "已删除元数据: ${metadata_path}"
   fi
