@@ -51,6 +51,8 @@ CLIENT_IMPORT_PUBLISH_DIR="${DATA_DIR}/client-import-publish"
 CLIENT_IMPORT_HTTP_SERVICE="sing-box-import-http.service"
 CLIENT_IMPORT_HTTP_SCRIPT="${TOOLS_DIR}/import-http-server.py"
 CLIENT_IMPORT_HTTP_PORT="18080"
+# Auxiliary traffic accounting unit; it shares the sing-box prefix but is not a proxy.
+SINGBOX_DOMAIN_STATS_SERVICE_NAME="sing-box-domain-stats.service"
 SCRIPT_SOURCE_PATH="${BASH_SOURCE[0]-$0}"
 SCRIPT_DIR="$(cd -- "$(dirname "${SCRIPT_SOURCE_PATH}")" && pwd)"
 MODULES_DIR="${SCRIPT_DIR}/modules"
@@ -773,7 +775,8 @@ install_or_update_version() {
 list_service_candidates() {
   systemctl list-unit-files --type=service --no-legend 2>/dev/null \
     | awk '{print $1}' \
-    | grep -E '^sing-box.*\.service$' || true
+    | grep -E '^sing-box.*\.service$' \
+    | grep -vxF "$SINGBOX_DOMAIN_STATS_SERVICE_NAME" || true
 }
 
 service_exists() {
