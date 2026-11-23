@@ -682,9 +682,33 @@ backup_file_if_exists() {
   printf "%s" "$backup_path"
 }
 
+resolve_singbox_binary() {
+  if [[ -x "$BINARY_PATH" ]]; then
+    printf "%s" "$BINARY_PATH"
+    return 0
+  fi
+
+  local candidate
+  candidate="$(command -v sing-box 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf "%s" "$candidate"
+    return 0
+  fi
+
+  if [[ -x "/usr/bin/sing-box" ]]; then
+    printf "%s" "/usr/bin/sing-box"
+    return 0
+  fi
+
+  printf ""
+}
+
 validate_config_file() {
   local config_path="$1"
-  "$BINARY_PATH" check -c "$config_path" >/dev/null
+  local bin
+  bin="$(resolve_singbox_binary)"
+  [[ -n "$bin" ]] || die "未找到 sing-box 二进制，请先执行安装。"
+  "$bin" check -c "$config_path" >/dev/null
 }
 
 fetch_latest_version() {
@@ -702,12 +726,14 @@ fetch_latest_version() {
 }
 
 current_version() {
-  if [[ ! -x "$BINARY_PATH" ]]; then
+  local bin
+  bin="$(resolve_singbox_binary)"
+  if [[ -z "$bin" ]]; then
     printf ""
     return 0
   fi
 
-  "$BINARY_PATH" version 2>/dev/null | head -n1 | sed -E 's/.*version[[:space:]]+([^[:space:]]+).*/\1/'
+  "$bin" version 2>/dev/null | head -n1 | sed -E 's/.*version[[:space:]]+([^[:space:]]+).*/\1/'
 }
 
 download_release() {
@@ -776,6 +802,7 @@ list_service_candidates() {
   systemctl list-unit-files --type=service --no-legend 2>/dev/null \
     | awk '{print $1}' \
     | grep -E '^sing-box.*\.service$' \
+    | grep -vE '@\.service$' \
     | grep -vxF "$SINGBOX_DOMAIN_STATS_SERVICE_NAME" || true
 }
 
@@ -1090,10 +1117,12 @@ JSON
 write_service_file() {
   local service_name="$1"
   local config_path="$2"
-  local service_file
+  local service_file bin
 
   service_name="$(normalize_service_name "$service_name")"
   service_file="/etc/systemd/system/${service_name}"
+  bin="$(resolve_singbox_binary)"
+  bin="${bin:-$BINARY_PATH}"
 
   cat > "$service_file" <<EOF
 [Unit]
@@ -1103,7 +1132,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${BINARY_PATH} run -c ${config_path}
+ExecStart=${bin} run -c ${config_path}
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1048576
@@ -1194,7 +1223,7 @@ generate_self_signed_cert() {
 }
 
 configure_service_flow() {
-  if [[ ! -x "$BINARY_PATH" ]]; then
+  if [[ -z "$(resolve_singbox_binary)" ]]; then
     die "未找到 sing-box 二进制，请先执行安装。"
   fi
 
@@ -1224,11 +1253,12 @@ configure_service_flow() {
 }
 
 show_status() {
-  local version default_service
+  local version default_service bin
 
+  bin="$(resolve_singbox_binary)"
   version="$(current_version)"
   if [[ -n "$version" ]]; then
-    printf "sing-box 二进制 : %s\n" "$BINARY_PATH"
+    printf "sing-box 二进制 : %s\n" "${bin:-$BINARY_PATH}"
     printf "sing-box 版本   : %s\n" "$version"
   else
     printf "sing-box 二进制 : 未安装\n"
@@ -1561,7 +1591,8 @@ agent_require_managed_unit() {
 }
 
 agent_status() {
-  local version os_name unit protocol config_path first
+  local version bin os_name unit protocol config_path first
+  bin="$(resolve_singbox_binary)"
   version="$(current_version)"
   os_name=""
   if [[ -r /etc/os-release ]]; then
@@ -1577,7 +1608,7 @@ agent_status() {
   printf '"singbox":{"installed":%s,"version":%s,"binary":%s},' \
     "$([[ -n "$version" ]] && printf true || printf false)" \
     "$(agent_json_string "$version")" \
-    "$(agent_json_string "$BINARY_PATH")"
+    "$(agent_json_string "${bin:-$BINARY_PATH}")"
   printf '"modules":{"anytls":%s,"vless_reality":%s,"socks5":%s,"snell":%s,"trusttunnel":%s},' \
     "$ANYTLS_MODULE_LOADED" "$VLESS_REALITY_MODULE_LOADED" "$SOCKS5_MODULE_LOADED" "$SNELL_MODULE_LOADED" "$TRUSTTUNNEL_MODULE_LOADED"
 

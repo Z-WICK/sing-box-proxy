@@ -1302,7 +1302,7 @@ migrate_existing_anytls_flow() {
 }
 
 anytls_wizard_flow() {
-  if [[ ! -x "$BINARY_PATH" ]]; then
+  if [[ -z "$(resolve_singbox_binary)" ]]; then
     die "未找到 sing-box 二进制，请先执行安装。"
   fi
 

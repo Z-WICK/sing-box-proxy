@@ -33,7 +33,7 @@ assert_eq '"中文"' "$(agent_json_string "中文")" "utf-8 passthrough"
 systemctl() {
   case "$1" in
     list-unit-files)
-      printf "sing-box-socks5.service enabled enabled\nsing-box-custom.service disabled enabled\nnginx.service enabled enabled\n"
+      printf "sing-box-socks5.service enabled enabled\nsing-box-custom.service disabled enabled\nsing-box@.service disabled disabled\nnginx.service enabled enabled\n"
       ;;
     cat)
       case "$2" in
@@ -74,6 +74,9 @@ PY
 ( agent_require_managed_unit "sing-box-socks5.service" ) || fail "managed unit rejected"
 if ( agent_require_managed_unit "nginx.service" ) 2>/dev/null; then
   fail "unmanaged unit accepted"
+fi
+if ( agent_require_managed_unit "sing-box@.service" ) 2>/dev/null; then
+  fail "template unit accepted"
 fi
 if ( agent_require_managed_unit "bad;name.service" ) 2>/dev/null; then
   fail "invalid unit name accepted"
@@ -147,5 +150,18 @@ if agent_run_handler "rm -rf" >/dev/null; then fail "unknown action accepted"; f
 if ( agent_run bogus.action ) 2>/dev/null; then fail "agent_run accepted unknown action"; fi
 
 SBP_NONINTERACTIVE="false"
+
+# Fallback detection when sing-box is installed in PATH rather than /usr/local/bin/sing-box.
+tmp_bin_dir="$(mktemp -d)"
+cat > "${tmp_bin_dir}/sing-box" <<'EOF'
+#!/usr/bin/env bash
+printf "sing-box version 1.11.4\n"
+EOF
+chmod +x "${tmp_bin_dir}/sing-box"
+resolved_bin="$(BINARY_PATH="/nonexistent/sing-box" PATH="${tmp_bin_dir}:${PATH}" resolve_singbox_binary)"
+assert_eq "${tmp_bin_dir}/sing-box" "$resolved_bin" "resolve_singbox_binary falls back to PATH"
+detected_ver="$(unset -f current_version; BINARY_PATH="/nonexistent/sing-box" PATH="${tmp_bin_dir}:${PATH}" bash -c 'source <(sed "\$d" "$1"); BINARY_PATH="/nonexistent/sing-box"; current_version' _ "${ROOT_DIR}/scripts/sing-box-proxy-manager.sh")"
+assert_eq "1.11.4" "$detected_ver" "current_version reads version from PATH fallback"
+rm -rf "$tmp_bin_dir"
 
 printf "PASS: agent mode\n"

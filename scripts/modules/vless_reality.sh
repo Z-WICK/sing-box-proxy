@@ -25,8 +25,9 @@ resolve_vless_reality_client_port() {
 }
 
 generate_uuid_string() {
-  local uuid_value
-  uuid_value="$("$BINARY_PATH" generate uuid 2>/dev/null | head -n1 | tr -d '\r')"
+  local uuid_value bin
+  bin="$(resolve_singbox_binary)"
+  uuid_value="$([[ -n "$bin" ]] && "$bin" generate uuid 2>/dev/null | head -n1 | tr -d '\r' || true)"
   if [[ "$uuid_value" =~ ^[0-9a-fA-F-]{36}$ ]]; then
     printf "%s" "${uuid_value,,}"
     return 0
@@ -60,8 +61,10 @@ validate_reality_short_id() {
 }
 
 generate_reality_keypair() {
-  local keypair_output private_key public_key
-  keypair_output="$("$BINARY_PATH" generate reality-keypair 2>/dev/null)" || die "生成 Reality 密钥失败。"
+  local keypair_output private_key public_key bin
+  bin="$(resolve_singbox_binary)"
+  [[ -n "$bin" ]] || die "未找到 sing-box 二进制，请先执行安装。"
+  keypair_output="$("$bin" generate reality-keypair 2>/dev/null)" || die "生成 Reality 密钥失败。"
   private_key="$(printf "%s\n" "$keypair_output" | awk -F': ' '/^PrivateKey:/{print $2; exit}')"
   public_key="$(printf "%s\n" "$keypair_output" | awk -F': ' '/^PublicKey:/{print $2; exit}')"
 
@@ -653,7 +656,7 @@ show_vless_reality_parameters_flow() {
 }
 
 vless_reality_wizard_flow() {
-  if [[ ! -x "$BINARY_PATH" ]]; then
+  if [[ -z "$(resolve_singbox_binary)" ]]; then
     die "未找到 sing-box 二进制，请先执行安装。"
   fi
 
