@@ -6,6 +6,16 @@ import ServerForm from './components/ServerForm.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Toasts from './components/Toasts.jsx';
 
+function readInitialTheme() {
+  try {
+    const saved = localStorage.getItem('sbp-theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+  } catch {
+    // ignore storage errors
+  }
+  return 'system';
+}
+
 export default function App() {
   const [servers, setServers] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -14,12 +24,29 @@ export default function App() {
   const [statuses, setStatuses] = useState({});
   const [editing, setEditing] = useState(null); // null | 'new' | server
   const [toasts, setToasts] = useState([]);
+  const [theme, setTheme] = useState(readInitialTheme);
   const toastSeq = useRef(0);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light' || theme === 'dark') {
+      root.dataset.theme = theme;
+    } else {
+      delete root.dataset.theme;
+    }
+    try {
+      if (theme === 'system') localStorage.removeItem('sbp-theme');
+      else localStorage.setItem('sbp-theme', theme);
+    } catch {
+      // ignore storage errors
+    }
+  }, [theme]);
 
   const notify = useCallback((text, kind = 'info') => {
     const id = ++toastSeq.current;
-    setToasts((prev) => [...prev, { id, text, kind }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), kind === 'error' ? 7000 : 3500);
+    const duration = kind === 'error' ? 7000 : 3500;
+    setToasts((prev) => [...prev, { id, text, kind, duration }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), duration);
   }, []);
 
   const dismissToast = useCallback((id) => setToasts((prev) => prev.filter((t) => t.id !== id)), []);
@@ -128,6 +155,7 @@ export default function App() {
   }
 
   const selected = servers.find((s) => s.id === selectedId) || null;
+  const anyLoading = servers.some((s) => statuses[s.id]?.loading);
 
   return (
     <div className="layout">
@@ -135,6 +163,9 @@ export default function App() {
         servers={servers}
         statuses={statuses}
         selectedId={selectedId}
+        anyLoading={anyLoading}
+        theme={theme}
+        onThemeChange={setTheme}
         onSelect={setSelectedId}
         onAdd={() => setEditing('new')}
       />
@@ -152,6 +183,7 @@ export default function App() {
           />
         ) : (
           <Overview
+            key="overview"
             loaded={loaded}
             servers={servers}
             statuses={statuses}

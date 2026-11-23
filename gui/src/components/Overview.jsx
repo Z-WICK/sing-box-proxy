@@ -25,8 +25,15 @@ function FleetBar({ servers, statuses }) {
       </div>
       <div className="fleet-bar" role="img" aria-label={ORDER.map((h) => `${HEALTH_LABELS[h]} ${counts[h]}`).join('，')}>
         {ORDER.flatMap((h) =>
-          byHealth[h].map((s) => <span key={s.id} className={`fleet-seg seg-${h}`} title={`${s.name}：${HEALTH_LABELS[h]}`} />),
-        )}
+          byHealth[h].map((s) => ({ s, h })),
+        ).map(({ s, h }, idx) => (
+          <span
+            key={s.id}
+            style={{ '--i': idx }}
+            className={`fleet-seg seg-${h}`}
+            title={`${s.name}：${HEALTH_LABELS[h]}`}
+          />
+        ))}
         {total === 0 && <span className="fleet-seg seg-empty" />}
       </div>
       <dl className="fleet-legend">
@@ -53,7 +60,7 @@ export default function Overview({ loaded, servers, statuses, onSelect, onAdd, o
   const anyLoading = servers.some((s) => statuses[s.id]?.loading);
 
   return (
-    <div className="page">
+    <div className="page page-enter">
       <header className="page-header">
         <h1>全部节点</h1>
         <div className="actions">
@@ -81,7 +88,7 @@ export default function Overview({ loaded, servers, statuses, onSelect, onAdd, o
         </div>
       ) : (
         <div className="node-list" role="list">
-          {servers.map((server) => {
+          {servers.map((server, idx) => {
             const status = statuses[server.id];
             const info = status?.data;
             const services = (info?.services || []).filter((s) => s.protocol !== 'import-http');
@@ -91,6 +98,7 @@ export default function Overview({ loaded, servers, statuses, onSelect, onAdd, o
                 type="button"
                 role="listitem"
                 key={server.id}
+                style={{ '--i': idx }}
                 className={`node-row health-${health}`}
                 onClick={() => onSelect(server.id)}
               >
@@ -126,8 +134,11 @@ export default function Overview({ loaded, servers, statuses, onSelect, onAdd, o
                   )}
                 </span>
 
-                <span className="node-latency mono" title="完成一次状态检测的耗时（含 SSH 连接）">
-                  {status?.loading ? <span className="loader" /> : formatMs(status?.elapsedMs)}
+                <span className="node-end">
+                  <span className="node-latency mono" title="完成一次状态检测的耗时（含 SSH 连接）">
+                    {status?.loading ? <span className="loader" /> : formatMs(status?.elapsedMs)}
+                  </span>
+                  <Icon name="chevronRight" size={15} className="node-chevron" />
                 </span>
               </button>
             );

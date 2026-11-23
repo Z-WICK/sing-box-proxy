@@ -59,12 +59,12 @@ export default function ActionsPanel({ info, onAction, onOpenTerminal }) {
       </section>
 
       <div className="proto-grid">
-        {PROTOCOLS.map((p) => {
+        {PROTOCOLS.map((p, idx) => {
           const state = stateOf(services, p.id);
           const blocked = p.needsSingbox && !singbox.installed;
           const secondary = state.installed ? SECONDARY_ACTIONS[p.id] || [] : [];
           return (
-            <article key={p.id} className={`proto-card proto-${p.id}`}>
+            <article key={p.id} style={{ '--i': idx }} className={`proto-card proto-${p.id}`}>
               <header>
                 <span className="proto-tile" aria-hidden="true">
                   {GLYPHS[p.id]}

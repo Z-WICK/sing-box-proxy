@@ -37,8 +37,8 @@ export default function QrCode({ value, size = 168, label }) {
       role="img"
       aria-label={label || '二维码'}
     >
-      <rect x={-quiet} y={-quiet} width={box} height={box} fill="#fff" />
-      <path d={path} fill="#16213a" />
+      <rect x={-quiet} y={-quiet} width={box} height={box} fill="#ffffff" />
+      <path d={path} fill="#141413" />
     </svg>
   );
 }

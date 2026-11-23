@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { PROTOCOL_LABELS } from '../api.js';
 import {
   findEndpoint,
@@ -135,6 +135,8 @@ export default function ParamsModal({ title, protocol, unit, text, loading, erro
   const [tab, setTab] = useState(0);
   const [qr, setQr] = useState(null);
   const [copied, copy] = useCopy();
+  const tabRefs = useRef({});
+  const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false });
 
   useEffect(() => {
     const onKey = (e) => {
@@ -148,6 +150,17 @@ export default function ParamsModal({ title, protocol, unit, text, loading, erro
 
   const rawIndex = parsed.sections.length;
   const activeTab = structured ? tab : rawIndex;
+
+  useLayoutEffect(() => {
+    const update = () => {
+      const btn = tabRefs.current[activeTab];
+      if (!btn) return;
+      setIndicator({ left: btn.offsetLeft + 10, width: Math.max(0, btn.offsetWidth - 20), ready: true });
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [activeTab, parsed.sections.length, loading, error]);
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -206,8 +219,16 @@ export default function ParamsModal({ title, protocol, unit, text, loading, erro
             )}
 
             <div className="params-tabs" role="tablist">
+              <span
+                className={`params-tabs-indicator ${indicator.ready ? 'ready' : ''}`}
+                style={{ transform: `translateX(${indicator.left}px)`, width: `${indicator.width}px` }}
+                aria-hidden="true"
+              />
               {parsed.sections.map((s, i) => (
                 <button
+                  ref={(el) => {
+                    tabRefs.current[i] = el;
+                  }}
                   type="button"
                   role="tab"
                   key={s.title}
@@ -219,6 +240,9 @@ export default function ParamsModal({ title, protocol, unit, text, loading, erro
                 </button>
               ))}
               <button
+                ref={(el) => {
+                  tabRefs.current[rawIndex] = el;
+                }}
                 type="button"
                 role="tab"
                 aria-selected={activeTab === rawIndex}
@@ -230,17 +254,19 @@ export default function ParamsModal({ title, protocol, unit, text, loading, erro
             </div>
 
             <div className="params-body">
-              {activeTab === rawIndex ? (
-                <pre className="output">{text || '没有输出。'}</pre>
-              ) : (
-                <SectionView
-                  section={parsed.sections[activeTab]}
-                  index={activeTab}
-                  copied={copied}
-                  onCopy={copy}
-                  onQr={(item) => setQr({ value: item.value, label: item.key || parsed.sections[activeTab].title })}
-                />
-              )}
+              <div key={activeTab} className="section-enter">
+                {activeTab === rawIndex ? (
+                  <pre className="output">{text || '没有输出。'}</pre>
+                ) : (
+                  <SectionView
+                    section={parsed.sections[activeTab]}
+                    index={activeTab}
+                    copied={copied}
+                    onCopy={copy}
+                    onQr={(item) => setQr({ value: item.value, label: item.key || parsed.sections[activeTab].title })}
+                  />
+                )}
+              </div>
             </div>
 
             {parsed.notes.map((note, i) => (

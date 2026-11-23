@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { PARAM_PROTOCOLS, PROTOCOL_LABELS, api, stripAnsi } from '../api.js';
 import Icon from './Icon.jsx';
 import ActionDialog from './ActionDialog.jsx';
@@ -34,11 +34,24 @@ export default function ServerDetail({ server, status, notify, onRefresh, onEdit
   const [action, setAction] = useState(null); // { id, installed }
   const [busy, setBusy] = useState(''); // `${unit}:${action}`
   const [syncing, setSyncing] = useState(false);
+  const tabRefs = useRef({});
+  const [indicator, setIndicator] = useState({ left: 0, width: 0, ready: false });
 
   const info = status?.data;
   const services = info?.services || [];
   const health = serverHealth(status);
   const running = services.filter((s) => s.active === 'active').length;
+
+  useLayoutEffect(() => {
+    const update = () => {
+      const btn = tabRefs.current[tab];
+      if (!btn) return;
+      setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth, ready: true });
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [tab, services.length, Boolean(info)]);
 
   async function showOutput(title, loader, meta = {}) {
     setOutput({ ...meta, title, text: '', loading: true, error: '' });
@@ -80,7 +93,7 @@ export default function ServerDetail({ server, status, notify, onRefresh, onEdit
   const address = `${server.user ? `${server.user}@` : ''}${server.host}${server.port ? `:${server.port}` : ''}`;
 
   return (
-    <div className="page">
+    <div className="page page-enter">
       <header className="detail-header">
         <div className="detail-title">
           <div className={`health-badge badge-${health}`}>
@@ -139,19 +152,51 @@ export default function ServerDetail({ server, status, notify, onRefresh, onEdit
       </dl>
 
       <div className="tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === 'services'} className={tab === 'services' ? 'active' : ''} onClick={() => setTab('services')}>
+        <span
+          className={`tabs-indicator ${indicator.ready ? 'ready' : ''}`}
+          style={{ transform: `translateX(${indicator.left}px)`, width: `${indicator.width}px` }}
+          aria-hidden="true"
+        />
+        <button
+          ref={(el) => {
+            tabRefs.current.services = el;
+          }}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'services'}
+          className={tab === 'services' ? 'active' : ''}
+          onClick={() => setTab('services')}
+        >
           服务
           {info && <span className="tab-count">{services.length}</span>}
         </button>
-        <button type="button" role="tab" aria-selected={tab === 'manage'} className={tab === 'manage' ? 'active' : ''} onClick={() => setTab('manage')}>
+        <button
+          ref={(el) => {
+            tabRefs.current.manage = el;
+          }}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'manage'}
+          className={tab === 'manage' ? 'active' : ''}
+          onClick={() => setTab('manage')}
+        >
           安装与配置
         </button>
-        <button type="button" role="tab" aria-selected={tab === 'terminal'} className={tab === 'terminal' ? 'active' : ''} onClick={() => setTab('terminal')}>
+        <button
+          ref={(el) => {
+            tabRefs.current.terminal = el;
+          }}
+          type="button"
+          role="tab"
+          aria-selected={tab === 'terminal'}
+          className={tab === 'terminal' ? 'active' : ''}
+          onClick={() => setTab('terminal')}
+        >
           终端
         </button>
       </div>
 
-      <div hidden={tab !== 'services'}>
+      <div hidden={tab !== 'services'} className={`tab-panel ${tab === 'services' ? 'is-active' : ''}`}>
         {info && services.length === 0 && (
           <div className="empty compact">
             <h2>这台服务器上还没有代理服务</h2>
@@ -166,12 +211,12 @@ export default function ServerDetail({ server, status, notify, onRefresh, onEdit
 
         {services.length > 0 && (
           <ul className="service-list">
-            {services.map((svc) => {
+            {services.map((svc, idx) => {
               const isRunning = svc.active === 'active';
               const label = PROTOCOL_LABELS[svc.protocol] || svc.protocol;
               const isBusy = busy.startsWith(`${svc.unit}:`);
               return (
-                <li key={svc.unit} className="service-row">
+                <li key={svc.unit} style={{ '--i': idx }} className="service-row">
                   <span className={`proto-tile proto-${svc.protocol}`} aria-hidden="true">
                     {PROTOCOL_GLYPHS[svc.protocol] || '··'}
                   </span>
@@ -251,7 +296,7 @@ export default function ServerDetail({ server, status, notify, onRefresh, onEdit
         )}
       </div>
 
-      <div hidden={tab !== 'manage'}>
+      <div hidden={tab !== 'manage'} className={`tab-panel ${tab === 'manage' ? 'is-active' : ''}`}>
         <ActionsPanel
           info={info}
           onAction={(id, installed) => setAction({ id, installed })}
@@ -259,7 +304,7 @@ export default function ServerDetail({ server, status, notify, onRefresh, onEdit
         />
       </div>
 
-      <div hidden={tab !== 'terminal'}>
+      <div hidden={tab !== 'terminal'} className={`tab-panel ${tab === 'terminal' ? 'is-active' : ''}`}>
         <TerminalPanel server={server} visible={tab === 'terminal'} onSessionEnd={onRefresh} />
       </div>
 
